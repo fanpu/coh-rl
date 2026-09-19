@@ -85,7 +85,7 @@ from coh.sim.constants import (
     CELL_M,
     TICKS_PER_SECOND,
 )
-from coh.sim.state import Building, Squad, SquadState
+from coh.sim.state import Building, Squad, SquadState, entity_ids
 from coh.sim.systems import footprints, garrison, vehicle_combat, vision
 
 # Re-exported for backward compatibility: every name other modules and tests
@@ -199,7 +199,7 @@ def _snapshot(sim: "Sim") -> _Snapshot:
     ids: list[int] = []
     pos: list[np.ndarray] = []
     teams: list[int] = []
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         if not _is_targetable(squad):
             continue
@@ -209,7 +209,7 @@ def _snapshot(sim: "Sim") -> _Snapshot:
 
     building_ids: list[int] = []
     building_team: list[int] = []
-    for bid in sorted(sim.state.buildings):
+    for bid in entity_ids(sim.state.buildings):
         building = sim.state.buildings[bid]
         team = _building_team(sim, building)
         if team == _NO_TEAM:
@@ -234,7 +234,7 @@ def _snapshot(sim: "Sim") -> _Snapshot:
 def run(sim: "Sim") -> None:
     """Advance the combat system by one tick."""
     snapshot = _snapshot(sim)
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads.get(sid)
         if squad is None:
             continue  # destroyed earlier this tick
@@ -262,7 +262,7 @@ def _target_aim_pos(sim: "Sim", squad: Squad) -> np.ndarray | None:
 
 def _can_fight(sim: "Sim", squad: Squad) -> bool:
     """Garrisoned squads fire (from the building); these ones never do."""
-    if squad.abandoned or not squad.alive_members or squad.pinned:
+    if squad.abandoned or not squad.has_alive_members or squad.pinned:
         return False
     if squad.state in _NO_COMBAT_STATES:
         return False

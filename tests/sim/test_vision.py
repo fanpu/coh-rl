@@ -337,3 +337,62 @@ def test_vision_tick_is_fast_with_warm_cache_on_hedgerow_crossing():
         sim.tick()
     elapsed_per_tick_ms = (time.perf_counter() - start) / n * 1000
     assert elapsed_per_tick_ms < 20.0, f"vision tick took {elapsed_per_tick_ms:.2f}ms (warm cache)"
+
+
+# ---------------------------------------------------------------------------
+# the inlined LOS walk, and the composed-grid cache (vision._grid_for_team)
+# ---------------------------------------------------------------------------
+
+
+def test_has_los_matches_a_walk_of_the_bresenham_line():
+    """`has_los`'s inlined walk must agree with `_bresenham` cell for cell.
+
+    The two are separate pieces of code describing the same line, so this
+    checks every ordered pair of cells in a small obstructed map against the
+    list-building reference that the mask computation uses.
+    """
+    width, height = 10, 5
+    game_map = make_map(
+        ["." * width] * height,
+        points=[{"id": "m", "name": "M", "type": "victory", "cell": [5, 4]}],
+        starts=[
+            {"slot": 0, "team": 0, "hq_cell": [0, 0], "sector": "a"},
+            {"slot": 1, "team": 1, "hq_cell": [8, 0], "sector": "a"},
+        ],
+    )
+    # Stamped after validation: a wall pattern this dense would leave the
+    # point unreachable, and this test only cares about the LOS layer.
+    for blocker in ((2, 1), (6, 1), (4, 2), (5, 2), (2, 3)):
+        game_map.set_terrain_cell(blocker, "H")
+    cells = [(cx, cy) for cy in range(height) for cx in range(width)]
+    for a in cells:
+        for b in cells:
+            line = vision._bresenham(a[0], a[1], b[0], b[1])
+            expected = all(not game_map.los_block[cy, cx] for cx, cy in line[1:-1])
+            got = vision.has_los(game_map, center_of(a, CELL_M), center_of(b, CELL_M))
+            assert got == expected, (a, b)
+
+
+def test_visible_grid_tracks_a_squad_that_moves():
+    """The per-team grid cache must not survive a sight source actually moving."""
+    sim = make_sim(seed=0)
+    squad = spawn(sim, 0, "rifles", (20, 5))
+    sim.tick()
+    far = (34, 5)
+    assert not sim.state.visible[0][far[1], far[0]]
+
+    squad.pos = center_of(far, CELL_M)
+    sim.tick()
+    assert sim.state.visible[0][far[1], far[0]]
+
+
+def test_visible_grid_is_a_fresh_array_each_tick():
+    """A caller writing into `state.visible` must not poison the next tick."""
+    sim = make_sim(seed=0)
+    spawn(sim, 0, "rifles", (20, 5))
+    sim.tick()
+    clean = sim.state.visible[0].copy()
+
+    sim.state.visible[0][:, :] = True  # what several sim tests do
+    sim.tick()
+    assert np.array_equal(sim.state.visible[0], clean)

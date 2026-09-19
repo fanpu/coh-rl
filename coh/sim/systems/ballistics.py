@@ -28,15 +28,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from coh.data.schema import WeaponDef
 from coh.maps.cover import cover_at
-from coh.maps.format import cell_of
+from coh.maps.format import cell_of, distance
 from coh.sim.constants import CELL_M, FORMATION_OFFSETS, TICKS_PER_SECOND
-from coh.sim.state import Building, Event, Squad, SquadState
+from coh.sim.state import Building, Event, Squad, SquadState, entity_ids
 from coh.sim.systems import destruction, footprints, garrison, vehicle_combat, vision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -62,7 +62,7 @@ def _team_of(sim: "Sim", owner: int | None) -> int:
 
 def _is_targetable(squad: Squad) -> bool:
     """Abandoned squads and squads with no members are never targets."""
-    return not squad.abandoned and bool(squad.alive_members)
+    return not squad.abandoned and squad.has_alive_members
 
 
 def _building_team(sim: "Sim", building: Building) -> int:
@@ -97,24 +97,46 @@ def _weapon_of(sim: "Sim", member: "Member") -> WeaponDef | None:
     return sim.data.weapons.get(member.weapon)
 
 
-def _armed_members(sim: "Sim", squad: Squad) -> Iterable[tuple[int, "Member", WeaponDef]]:
-    """`(slot, member, weapon)` for every living member with a usable weapon."""
+def _armed_members(sim: "Sim", squad: Squad) -> list[tuple[int, "Member", WeaponDef]]:
+    """`(slot, member, weapon)` for every living member with a usable weapon.
+
+    A list rather than a generator: every caller walks it to the end anyway
+    (and `fire_squad` copies it), and it is built several times per squad per
+    tick, where the generator's frame setup was pure overhead.
+    """
+    weapons = sim.data.weapons
+    out: list[tuple[int, "Member", WeaponDef]] = []
     for slot, member in enumerate(squad.members):
-        if member.hp <= 0:
+        if member.hp <= 0 or not member.weapon:
             continue
-        weapon = _weapon_of(sim, member)
+        weapon = weapons.get(member.weapon)
         if weapon is not None:
-            yield slot, member, weapon
+            out.append((slot, member, weapon))
+    return out
 
 
 def _max_range(sim: "Sim", squad: Squad) -> float:
-    return max((w.ranges[2] for _, _, w in _armed_members(sim, squad)), default=0.0)
+    """Longest far-band range among the squad's usable weapons, else 0.0."""
+    reach: float | None = None
+    weapons = sim.data.weapons
+    for member in squad.members:
+        if member.hp <= 0 or not member.weapon:
+            continue
+        weapon = weapons.get(member.weapon)
+        if weapon is not None and (reach is None or weapon.ranges[2] > reach):
+            reach = weapon.ranges[2]
+    return 0.0 if reach is None else reach
 
 
 def _primary_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
     """The squad's first usable weapon: its target table drives acquisition."""
-    for _, _, weapon in _armed_members(sim, squad):
-        return weapon
+    weapons = sim.data.weapons
+    for member in squad.members:
+        if member.hp <= 0 or not member.weapon:
+            continue
+        weapon = weapons.get(member.weapon)
+        if weapon is not None:
+            return weapon
     return None
 
 
@@ -149,7 +171,7 @@ def _describe(sim: "Sim", from_pos: np.ndarray, entity: Squad | Building) -> _Ta
         if sdef is None:
             return None
         aim = entity.pos
-        return _Target(entity, sdef.target_type, aim, float(np.linalg.norm(aim - from_pos)))
+        return _Target(entity, sdef.target_type, aim, distance(aim, from_pos))
 
     target_type = _building_target_type(sim, entity)
     if target_type is None:
@@ -378,18 +400,22 @@ def _spill_suppression(sim: "Sim", victim: Squad, weapon: WeaponDef, s: float) -
     victim_team = _team_of(sim, victim.owner)
     spill = s * weapon.nearby_suppression_mult
     radius2 = weapon.nearby_suppression_radius * weapon.nearby_suppression_radius
-    for sid in sorted(sim.state.squads):
+    victim_x, victim_y = float(victim.pos[0]), float(victim.pos[1])
+    for sid in entity_ids(sim.state.squads):
         if sid == victim.id:
             continue
         other = sim.state.squads[sid]
-        if not other.alive_members or other.state is SquadState.RETREATING:
+        if not other.has_alive_members or other.state is SquadState.RETREATING:
             continue
         if _team_of(sim, other.owner) != victim_team:
             continue
         other_sdef = sim.data.squads.get(other.def_id)
         if other_sdef is None or other_sdef.suppression is None:
             continue
-        dist2 = float(((other.pos - victim.pos) ** 2).sum())
+        # `dx * dx + dy * dy` over the same float64s numpy summed: identical.
+        dx = float(other.pos[0]) - victim_x
+        dy = float(other.pos[1]) - victim_y
+        dist2 = dx * dx + dy * dy
         if dist2 > radius2:
             continue
         other.last_hit_tick = sim.state.tick

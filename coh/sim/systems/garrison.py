@@ -52,7 +52,7 @@ from coh.maps.format import cell_of, center_of
 from coh.sim import orders as orders_mod
 from coh.sim import pathfinding
 from coh.sim.constants import CELL_M, GARRISON_ENTER_RANGE_CELLS
-from coh.sim.state import Building, Event, Squad, SquadState
+from coh.sim.state import Building, Event, Squad, SquadState, entity_ids
 from coh.sim.systems import footprints
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -96,7 +96,7 @@ def occupants(sim: "Sim", building: Building) -> list[Squad]:
     found = []
     for sid in building.garrison:
         squad = sim.state.squads.get(sid)
-        if squad is not None and squad.garrison_in == building.id and squad.alive_members:
+        if squad is not None and squad.garrison_in == building.id and squad.has_alive_members:
             found.append(squad)
     return found
 
@@ -291,9 +291,9 @@ def _nearest_visible_enemy_pos(sim: "Sim", squad: Squad, building: Building) -> 
     centre = center_of(centre_cell(sim, building), CELL_M)
     best: np.ndarray | None = None
     best_distance = math.inf
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         other = sim.state.squads[sid]
-        if other.abandoned or not other.alive_members:
+        if other.abandoned or not other.has_alive_members:
             continue
         owner = sim.state.players.get(other.owner)
         if owner is None or owner.team == team:
@@ -366,7 +366,7 @@ def _eject_all(sim: "Sim", building: Building) -> None:
 def _cancel_garrison_orders(sim: "Sim", building_id: int) -> None:
     from coh.sim.systems import combat
 
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         order = squad.order
         if isinstance(order, orders_mod.Garrison) and order.building_id == building_id:
@@ -381,7 +381,7 @@ def _cancel_garrison_orders(sim: "Sim", building_id: int) -> None:
 
 def run(sim: "Sim") -> None:
     """Advance the garrison system by one tick."""
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads.get(sid)
         if squad is None:
             continue  # left the field earlier this tick

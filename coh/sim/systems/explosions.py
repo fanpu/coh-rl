@@ -21,7 +21,7 @@ import numpy as np
 
 from coh.data.schema import WeaponDef
 from coh.sim.constants import AOE_EDGE_FALLOFF
-from coh.sim.state import Building, Event, Squad
+from coh.sim.state import Building, Event, Squad, entity_ids
 from coh.sim.systems import footprints, vehicle_combat
 from coh.sim.systems.ballistics import (
     _NO_TEAM,
@@ -87,12 +87,12 @@ def _explode(sim: "Sim", attacker: Squad, weapon: WeaponDef, band: int, impact: 
         return False
     team = _team_of(sim, attacker.owner)
     hurt = False
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         victim = sim.state.squads.get(sid)
         if victim is None or not _is_targetable(victim) or _team_of(sim, victim.owner) == team:
             continue
         hurt = _explode_on_squad(sim, attacker, weapon, band, impact, victim) or hurt
-    for bid in sorted(sim.state.buildings):
+    for bid in entity_ids(sim.state.buildings):
         building = sim.state.buildings.get(bid)
         if building is None or _building_team(sim, building) in (team, _NO_TEAM):
             continue

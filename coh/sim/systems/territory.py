@@ -22,12 +22,11 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-import numpy as np
 
-from coh.maps.format import center_of
+from coh.maps.format import center_of, distance
 from coh.sim import orders as orders_mod
 from coh.sim.constants import CELL_M, DT
-from coh.sim.state import Event, SquadState
+from coh.sim.state import Event, SquadState, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.maps.format import PointDef
@@ -107,7 +106,7 @@ def _capturers_by_team(sim: "Sim", pid: str, point_def: "PointDef", econ) -> dic
     """Sum of `capture_rate` per team among squads eligible to capture `pid`."""
     center = center_of(point_def.cell, CELL_M)
     totals: dict[int, float] = {}
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         order = squad.order
         if not isinstance(order, orders_mod.Capture) or order.point_id != pid:
@@ -116,12 +115,12 @@ def _capturers_by_team(sim: "Sim", pid: str, point_def: "PointDef", econ) -> dic
             continue
         if squad.garrison_in is not None or squad.abandoned:
             continue
-        if not squad.alive_members:
+        if not squad.has_alive_members:
             continue
         sdef = sim.data.squads[squad.def_id]
         if sdef.capture_rate <= 0:
             continue
-        dist = float(np.linalg.norm(squad.pos - center))
+        dist = distance(squad.pos, center)
         if dist > econ.capture_radius:
             continue
         team = sim.state.players[squad.owner].team
@@ -203,7 +202,7 @@ def _decay(point: "PointState", econ) -> None:
 
 
 def _clear_capture_orders(sim: "Sim", pid: str, team: int) -> None:
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         order = squad.order
         if isinstance(order, orders_mod.Capture) and order.point_id == pid:

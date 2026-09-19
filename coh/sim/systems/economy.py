@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from coh.data.schema import Cost, PointIncome
 from coh.sim.constants import DT
+from coh.sim.state import entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -95,7 +96,7 @@ def pop_used(sim: "Sim", player_id: int) -> int:
     past their cap and then be handed the units for free.
     """
     used = sum(sim.data.squads[squad.def_id].population for squad in living_squads(sim, player_id))
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner != player_id:
             continue
@@ -146,8 +147,8 @@ def has_observation_post(sim: "Sim", point: "PointState") -> bool:
 def living_squads(sim: "Sim", player_id: int) -> list["Squad"]:
     """The player's squads that still have a crew (abandoned shells excluded)."""
     out = []
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
-        if squad.owner == player_id and not squad.abandoned and squad.alive_members:
+        if squad.owner == player_id and not squad.abandoned and squad.has_alive_members:
             out.append(squad)
     return out

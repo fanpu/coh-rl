@@ -40,7 +40,7 @@ from coh.sim.orders import (
     reinforce_building,
     validate_order,
 )
-from coh.sim.state import Building, Squad
+from coh.sim.state import Building, Squad, entity_ids
 from coh.sim.systems import economy, production, vision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -245,9 +245,9 @@ def _buildable(sim: "Sim", player_id: int) -> list[str]:
     """
     player = sim.state.players[player_id]
     out: list[str] = []
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
-        if squad.owner != player_id or not squad.alive_members:
+        if squad.owner != player_id or not squad.has_alive_members:
             continue
         for structure in sim.data.squads[squad.def_id].builds:
             if structure in out:
@@ -267,7 +267,7 @@ def available_orders(sim: "Sim", player_id: int) -> dict[str, Any]:
     """The currently legal train / build / research / squad-upgrade options."""
     train: dict[int, list[str]] = {}
     research: dict[int, list[str]] = {}
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner != player_id:
             continue
@@ -282,9 +282,9 @@ def available_orders(sim: "Sim", player_id: int) -> dict[str, Any]:
             research[building_id] = upgrades
 
     squad_upgrades: dict[int, list[str]] = {}
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
-        if squad.owner != player_id or not squad.alive_members:
+        if squad.owner != player_id or not squad.has_alive_members:
             continue
         options = [
             upgrade_id
@@ -319,15 +319,15 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
 
     visible_enemy_squads = [
         sim.state.squads[sid]
-        for sid in sorted(sim.state.squads)
+        for sid in entity_ids(sim.state.squads)
         if sim.state.players[sim.state.squads[sid].owner].team != team
-        and sim.state.squads[sid].alive_members
+        and sim.state.squads[sid].has_alive_members
         and vision.is_visible(sim, team, sim.state.squads[sid])
     ]
 
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
-        if not squad.alive_members:
+        if not squad.has_alive_members:
             continue
         owner_team = sim.state.players[squad.owner].team
         if owner_team == team:
@@ -341,7 +341,7 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
     enemy_buildings: list[BuildingView] = []
     neutral_buildings: list[BuildingView] = []
 
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         visible = vision.is_visible(sim, team, building)
         if building.neutral or building.owner is None:

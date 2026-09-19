@@ -479,3 +479,37 @@ def test_hash_is_stable_across_processes_and_hash_seeds():
         )
         digests.add(out.stdout.strip())
     assert len(digests) == 1
+
+
+# ---------------------------------------------------------------------------
+# entity_ids: the invariant the tick loops rely on instead of sorting
+# ---------------------------------------------------------------------------
+
+
+def test_entity_dicts_stay_in_ascending_id_order():
+    """`state.squads` / `state.buildings` iterate in ascending id, always.
+
+    `coh.sim.state.entity_ids` is plain insertion-order iteration and the tick
+    systems use it in place of `sorted(...)`. That is only equivalent because
+    ids are handed out by a monotonic counter and entities are only ever
+    appended or popped -- if anything ever re-inserts an entity (or ids stop
+    growing), this test fails and `entity_ids` must go back to sorting.
+    """
+    from coh.sim.state import entity_ids
+
+    sim = make_sim(seed=3)
+    spawn(sim, 0, "rifles", (6, 6))
+    spawn(sim, 1, "rifles", (7, 6))
+    victim = spawn(sim, 0, "hmg_team", (8, 6))
+    sim.spawn_building(0, "barracks", (2, 10))
+
+    # Kill one off in the middle, then spawn again on top of the hole.
+    for member in victim.members:
+        member.hp = 0.0
+    combat_mod = systems.combat
+    combat_mod._destroy_squad(sim, victim)
+    spawn(sim, 1, "rifles", (9, 6))
+    sim.spawn_building(1, "barracks", (20, 10))
+
+    assert entity_ids(sim.state.squads) == sorted(sim.state.squads)
+    assert entity_ids(sim.state.buildings) == sorted(sim.state.buildings)

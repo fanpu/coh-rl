@@ -13,6 +13,7 @@ loaded (e.g. the sim, later).
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -189,6 +190,20 @@ def center_of(cell: tuple[int, int], cell_m: float = 2.0) -> np.ndarray:
     """(cx, cy) -> world position (meters) of the cell's center."""
     cx, cy = cell
     return np.array([(cx + 0.5) * cell_m, (cy + 0.5) * cell_m])
+
+
+def distance(a, b) -> float:
+    """Distance in meters between two world positions.
+
+    Exactly `float(np.linalg.norm(a - b))` for the 2-D positions the sim uses
+    -- `np.linalg.norm` of a 2-vector is `sqrt(x0*x0 + x1*x1)` over the same
+    float64 values, so the two agree bit for bit -- without allocating the
+    difference array. Worth having as its own function because range checks
+    are the single most frequent numeric operation in a tick.
+    """
+    dx = float(a[0]) - float(b[0])
+    dy = float(a[1]) - float(b[1])
+    return math.sqrt(dx * dx + dy * dy)
 
 
 # ---------------------------------------------------------------------------

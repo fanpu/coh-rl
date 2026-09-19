@@ -33,7 +33,7 @@ import numpy as np
 from coh.maps.cover import cover_at
 from coh.maps.format import cell_of
 from coh.sim.constants import CELL_M, DT, TICKS_PER_SECOND
-from coh.sim.state import Event, Member
+from coh.sim.state import Event, Member, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -42,7 +42,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 def run(sim: "Sim") -> None:
     """Advance the suppression system by one tick."""
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         _update_squad(sim, sim.state.squads[sid])
     _advance_reinforce(sim)
 
@@ -54,7 +54,7 @@ def run(sim: "Sim") -> None:
 
 def _update_squad(sim: "Sim", squad: "Squad") -> None:
     sdef = sim.data.squads.get(squad.def_id)
-    if sdef is None or sdef.suppression is None or not squad.alive_members:
+    if sdef is None or sdef.suppression is None or not squad.has_alive_members:
         return
     sup = sdef.suppression
 
@@ -106,11 +106,11 @@ def _recovery_cover(sim: "Sim", squad: "Squad") -> str:
 def _advance_reinforce(sim: "Sim") -> None:
     from coh.sim import orders as orders_mod
 
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         if not squad.reinforcing:
             continue
-        if not squad.alive_members:
+        if not squad.has_alive_members:
             squad.reinforcing = False
             continue
 

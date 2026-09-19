@@ -99,6 +99,19 @@ class Squad:
     def alive_members(self) -> list[Member]:
         return [m for m in self.members if m.hp > 0]
 
+    @property
+    def has_alive_members(self) -> bool:
+        """`bool(self.alive_members)` without building the list.
+
+        "Does this squad still have anyone in it" is asked tens of thousands
+        of times a second in the tick loop and almost never wants the list
+        itself.
+        """
+        for member in self.members:
+            if member.hp > 0:
+                return True
+        return False
+
 
 @dataclass
 class QueueItem:
@@ -181,6 +194,29 @@ class GameState:
     # (cx, cy, ".") for a fence cell cleared. Included in `state_hash` so two
     # sims that only diverge by a crushed fence hash differently.
     terrain_changes: list[tuple[int, int, str]] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic iteration
+# ---------------------------------------------------------------------------
+
+
+def entity_ids(entities: dict[int, Any]) -> list[int]:
+    """Ids of an entity dict (`state.squads` / `state.buildings`) ascending.
+
+    Both dicts are *already* in ascending-id order: `Sim._take_id` is the only
+    source of ids and it only ever counts up, insertion is the only way an
+    entity enters the dict, and removal is always `pop` (which cannot reorder
+    what is left). So this is plain insertion-order iteration -- exactly what
+    the determinism rule permits -- and saves sorting the key list in the tick
+    loops that walk every entity several times per tick.
+
+    Returns a *list*, not a view, because most callers may destroy entities
+    while iterating (a squad wiped mid-volley); `tests/sim/test_sim_core.py`
+    pins the ascending-order invariant so this can never silently rot into
+    `sorted()`-with-different-results.
+    """
+    return list(entities)
 
 
 # ---------------------------------------------------------------------------

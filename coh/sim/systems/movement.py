@@ -58,7 +58,7 @@ from coh.maps.format import cell_of, center_of
 from coh.sim import orders as orders_mod
 from coh.sim import pathfinding
 from coh.sim.constants import CELL_M, DT, TICKS_PER_SECOND, VEHICLE_MOVE_ARC_DEG
-from coh.sim.state import SquadState
+from coh.sim.state import SquadState, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -73,7 +73,7 @@ _ARRIVAL_CLEARS_ORDER = (orders_mod.Move, orders_mod.AttackMove, orders_mod.Retr
 
 def run(sim: "Sim") -> None:
     """Advance the movement system by one tick."""
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads.get(sid)
         if squad is None:
             continue  # re-crewed into an abandoned weapon earlier this tick

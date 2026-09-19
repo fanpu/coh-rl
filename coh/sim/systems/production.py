@@ -43,7 +43,7 @@ from coh.sim.constants import (
     DT,
     TICKS_PER_SECOND,
 )
-from coh.sim.state import Event, QueueItem, SquadState
+from coh.sim.state import Event, QueueItem, SquadState, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.data.schema import BuildingDef, Cost, SquadUpgradeDef
@@ -78,7 +78,7 @@ def requirement_met(sim: "Sim", player_id: int, req_id: str) -> bool:
     building of that def owned by this player."""
     if req_id in sim.state.players[player_id].upgrades:
         return True
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner == player_id and building.def_id == req_id and building.progress >= 1.0:
             return True
@@ -109,7 +109,7 @@ def observation_post_id(sim: "Sim", faction: str) -> str | None:
 
 def unfinished_building_at(sim: "Sim", player_id: int, def_id: str, cell: tuple[int, int]) -> "Building | None":
     """This player's still-under-construction building of `def_id` at `cell`."""
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if (
             building.owner == player_id
@@ -169,7 +169,7 @@ def _op_site_problem(sim: "Sim", player: "Player", bdef: "BuildingDef", cell: tu
 
 def _overlap_problem(sim: "Sim", bdef: "BuildingDef", cell: tuple[int, int]) -> str:
     wanted = set(footprint_cells(cell, bdef.footprint))
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         other = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
         size = other.footprint if other is not None else (1, 1)
@@ -214,7 +214,7 @@ def enqueue(sim: "Sim", building: "Building", kind: str, item_id: str, cost: "Co
 
 
 def research_queued(sim: "Sim", player_id: int, upgrade_id: str) -> bool:
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner != player_id:
             continue
@@ -229,11 +229,11 @@ def research_queued(sim: "Sim", player_id: int, upgrade_id: str) -> bool:
 
 
 def _finish_squad_upgrades(sim: "Sim") -> None:
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
         if squad.pending_upgrade is None:
             continue
-        if not squad.alive_members:
+        if not squad.has_alive_members:
             squad.pending_upgrade = None  # the squad died mid-purchase
             continue
         if sim.state.tick < squad.upgrade_done_tick:
@@ -270,12 +270,12 @@ def _swap_weapons(squad: "Squad", udef: "SquadUpgradeDef") -> None:
 def _advance_construction(sim: "Sim") -> None:
     builders_by_site: dict[int, list["Squad"]] = {}
 
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
         if squad.build_target is None:
             continue
         site = sim.state.buildings.get(squad.build_target)
-        if site is None or site.progress >= 1.0 or not squad.alive_members:
+        if site is None or site.progress >= 1.0 or not squad.has_alive_members:
             _release_builder(squad)
             continue
         if not isinstance(squad.order, orders_mod.Build):
@@ -321,7 +321,7 @@ def release_builders_of(sim: "Sim", building_id: int) -> None:
     with it; they go idle where they stand rather than keep hammering at a
     crater.
     """
-    for squad_id in sorted(sim.state.squads):
+    for squad_id in entity_ids(sim.state.squads):
         squad = sim.state.squads[squad_id]
         if squad.build_target == building_id:
             _release_builder(squad)
@@ -353,7 +353,7 @@ def _in_build_range(sim: "Sim", squad: "Squad", site: "Building") -> bool:
 
 
 def _advance_queues(sim: "Sim") -> None:
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner is None or building.progress < 1.0 or not building.queue:
             continue

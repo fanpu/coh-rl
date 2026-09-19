@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from coh.sim import orders as orders_mod
-from coh.sim.state import Event, Squad, SquadState
+from coh.sim.state import Event, Squad, SquadState, entity_ids
 from coh.sim.systems import footprints, garrison, vehicle_combat
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -63,7 +63,7 @@ def _remove_member(sim: "Sim", squad: Squad, member: "Member") -> None:
     sdef = sim.data.squads.get(squad.def_id)
     is_team_weapon = sdef is not None and sdef.kind == "team_weapon"
 
-    if not squad.alive_members:
+    if not squad.has_alive_members:
         if is_team_weapon:
             _abandon_weapon(sim, squad)
         else:
@@ -186,7 +186,7 @@ def _forget_target(sim: "Sim", entity_id: int) -> None:
     # fully loaded, so this costs nothing but a dict lookup.
     from coh.sim.systems import team_weapons
 
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
         if squad.target_id == entity_id:
             squad.target_id = None

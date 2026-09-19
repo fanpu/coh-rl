@@ -28,7 +28,7 @@ from coh.data.schema import Cost
 from coh.maps.format import cell_of, center_of
 from coh.sim import pathfinding
 from coh.sim.constants import CELL_M, MAX_QUEUE_LEN, TICKS_PER_SECOND
-from coh.sim.state import SquadState
+from coh.sim.state import SquadState, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.data.schema import SquadDef
@@ -660,7 +660,7 @@ def reinforce_building(sim: "Sim", squad: "Squad") -> "Building | None":
     team = sim.state.players[squad.owner].team
     best: "Building | None" = None
     best_dist = math.inf
-    for building_id in sorted(sim.state.buildings):
+    for building_id in entity_ids(sim.state.buildings):
         building = sim.state.buildings[building_id]
         if building.owner is None or building.progress < 1.0:
             continue

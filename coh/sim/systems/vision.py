@@ -21,8 +21,12 @@ Masks are pure functions of `(origin_cell, radius_cells, ignore_block,
 map.version)`, so they're cached on the `Sim` instance (`sim._vision_cache`,
 reset whole-sale whenever the map version changes, and capped at
 `VISION_MASK_CACHE_MAX` entries with FIFO eviction — a pure cache, so
-eviction never affects results/determinism). Neither cache is a module
-global: two `Sim`s never share state.
+eviction never affects results/determinism). The *composed* per-team grid is
+cached the same way (`sim._vision_grid_cache`): it is a pure function of the
+team's list of sight sources and the map version, and on most ticks neither
+changes, so `_grid_for_team` re-ORs the masks only when the source list
+actually differs from the one it last built from. None of these caches is a
+module global: two `Sim`s never share state.
 """
 
 from __future__ import annotations
@@ -33,12 +37,14 @@ import numpy as np
 
 from coh.maps.format import GameMap, cell_of
 from coh.sim.constants import CELL_M, VISION_MASK_CACHE_MAX
-from coh.sim.state import Building, Ghost, Squad
+from coh.sim.state import Building, Ghost, Squad, entity_ids
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
 
 __all__ = ["run", "is_visible", "has_los", "building_center_cell"]
+
+_NO_IGNORE: frozenset[tuple[int, int]] = frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -73,20 +79,40 @@ def has_los(m: GameMap, a_pos, b_pos, ignore: frozenset[tuple[int, int]] = froze
     """True if no `los_block` cell lies strictly between `a_pos` and `b_pos`
     (world meters; both endpoints excluded) on the Bresenham line `a -> b`.
 
-    Uses the same `_bresenham` routine, in the same direction, as the mask
-    computation below, so the two agree by construction. `ignore` is the
+    Walks the same line, in the same direction and with the same stepping
+    rule, as `_bresenham` (and therefore as the mask computation below), so
+    the two agree by construction; it is written out here rather than calling
+    `_bresenham` only so that the hottest query in the sim neither builds a
+    list nor keeps walking after the first blocker. `ignore` is the
     line-of-sight equivalent of `_mask_for`'s `ignore_block`: cells that are
     there but must not block, namely the footprint of a building one of the
     two ends is garrisoned in (task 12) — a squad is not blind past its own
     walls, and is not safe behind them either.
     """
-    ax, ay = cell_of(np.asarray(a_pos), CELL_M)
-    bx, by = cell_of(np.asarray(b_pos), CELL_M)
-    line = _bresenham(ax, ay, bx, by)
-    for cx, cy in line[1:-1]:
-        if m.los_block[cy, cx] and (cx, cy) not in ignore:
+    ax, ay = cell_of(a_pos, CELL_M)
+    bx, by = cell_of(b_pos, CELL_M)
+    if ax == bx and ay == by:
+        return True
+
+    los_block = m.los_block
+    dx = abs(bx - ax)
+    sx = 1 if ax < bx else -1
+    dy = -abs(by - ay)
+    sy = 1 if ay < by else -1
+    err = dx + dy
+    x, y = ax, ay
+    while True:
+        e2 = 2 * err
+        if e2 >= dy:
+            err += dy
+            x += sx
+        if e2 <= dx:
+            err += dx
+            y += sy
+        if x == bx and y == by:
+            return True  # reached the far endpoint: it is excluded
+        if los_block[y, x] and (x, y) not in ignore:
             return False
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +335,7 @@ def _update_ghosts(sim: "Sim", grids: dict[int, np.ndarray]) -> None:
         ghosts_for_team = sim.state.ghosts.setdefault(team, {})
         live_enemy_ids: set[int] = set()
 
-        for bid in sorted(sim.state.buildings):
+        for bid in entity_ids(sim.state.buildings):
             building = sim.state.buildings[bid]
             if building.neutral:
                 continue
@@ -348,16 +374,18 @@ def _update_ghosts(sim: "Sim", grids: dict[int, np.ndarray]) -> None:
                 del ghosts_for_team[bid]  # re-scouted: confirmed gone
 
 
-def run(sim: "Sim") -> None:
-    """Advance the vision system by one tick."""
-    grids = {team: np.zeros((sim.map.height, sim.map.width), dtype=bool) for team in sim.state.visible}
+def _sources(sim: "Sim") -> dict[int, list[tuple[tuple[int, int], int, frozenset[tuple[int, int]]]]]:
+    """Per team, the `(origin_cell, radius_cells, ignore_block)` of every
+    sight source it fields this tick, squads (ascending id) before buildings
+    (ascending id) — the order the OR below used to be taken in."""
+    per_team: dict[int, list] = {team: [] for team in sim.state.visible}
 
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
-        if squad.abandoned or not squad.alive_members:
+        if squad.abandoned or not squad.has_alive_members:
             continue
         owner = sim.state.players.get(squad.owner)
-        if owner is None or owner.team not in grids:
+        if owner is None or owner.team not in per_team:
             continue
         sdef = sim.data.squads.get(squad.def_id)
         if sdef is None:
@@ -371,15 +399,15 @@ def run(sim: "Sim") -> None:
             ignore_block = _footprint_cells(sim, building.cell, building.def_id)
         else:
             origin = cell_of(squad.pos, CELL_M)
-            ignore_block = frozenset()
-        grids[owner.team] |= _mask_for(sim, origin, radius_cells, ignore_block)
+            ignore_block = _NO_IGNORE
+        per_team[owner.team].append((origin, radius_cells, ignore_block))
 
-    for bid in sorted(sim.state.buildings):
+    for bid in entity_ids(sim.state.buildings):
         building = sim.state.buildings[bid]
         if building.neutral or building.owner is None or building.progress < 1.0:
             continue
         owner = sim.state.players.get(building.owner)
-        if owner is None or owner.team not in grids:
+        if owner is None or owner.team not in per_team:
             continue
         bdef = sim.data.buildings.get(building.def_id)
         if bdef is None:
@@ -387,7 +415,41 @@ def run(sim: "Sim") -> None:
         radius_cells = _radius_cells(bdef.sight)
         origin = building_center_cell(sim, building.cell, building.def_id)
         ignore_block = _footprint_cells(sim, building.cell, building.def_id)
-        grids[owner.team] |= _mask_for(sim, origin, radius_cells, ignore_block)
+        per_team[owner.team].append((origin, radius_cells, ignore_block))
+
+    return per_team
+
+
+def _grid_for_team(sim: "Sim", team: int, sources: list) -> np.ndarray:
+    """The OR of `sources`' masks, recomputed only when they actually change.
+
+    A team's grid is a pure function of its sight sources and the map version,
+    and on most ticks neither moves: nobody displaced, nobody died, no
+    footprint was stamped. So the composed grid is kept on the `Sim` alongside
+    the source list it was built from and reused when that list compares
+    equal. Callers get a *copy* — `state.visible[team]` has always been a
+    fresh array each tick and tests write into it, so handing out the cached
+    one would let a caller's edit leak into the next tick.
+    """
+    cache = getattr(sim, "_vision_grid_cache", None)
+    if cache is None:
+        cache = {}
+        sim._vision_grid_cache = cache
+
+    entry = cache.get(team)
+    if entry is not None and entry[0] == sim.map.version and entry[1] == sources:
+        return entry[2].copy()
+
+    grid = np.zeros((sim.map.height, sim.map.width), dtype=bool)
+    for origin, radius_cells, ignore_block in sources:
+        grid |= _mask_for(sim, origin, radius_cells, ignore_block)
+    cache[team] = (sim.map.version, sources, grid)
+    return grid.copy()
+
+
+def run(sim: "Sim") -> None:
+    """Advance the vision system by one tick."""
+    grids = {team: _grid_for_team(sim, team, sources) for team, sources in _sources(sim).items()}
 
     for team, grid in grids.items():
         sim.state.visible[team] = grid

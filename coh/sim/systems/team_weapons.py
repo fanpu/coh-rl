@@ -32,7 +32,7 @@ import numpy as np
 
 from coh.data.schema import WeaponDef
 from coh.sim.constants import AUTO_REFACE_HOLD_SETUPS, RECREW_RANGE_M
-from coh.sim.state import Event, Squad, SquadState
+from coh.sim.state import Event, Squad, SquadState, entity_ids
 from coh.sim.systems.ballistics import _describe, _lookup, _weapon_of
 from coh.sim.systems.destruction import _forget_target, _promote_gunner
 
@@ -202,7 +202,7 @@ def abandoned_weapon_near(sim: "Sim", pos: np.ndarray) -> Squad | None:
     """The nearest abandoned team weapon within `RECREW_RANGE_M` of `pos`."""
     best: Squad | None = None
     best_distance = RECREW_RANGE_M
-    for sid in sorted(sim.state.squads):
+    for sid in entity_ids(sim.state.squads):
         shell = sim.state.squads[sid]
         if not shell.abandoned:
             continue
