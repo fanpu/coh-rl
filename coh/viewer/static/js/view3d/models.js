@@ -82,7 +82,7 @@ const SLATE = '#5d5a55';
 const CHARCOAL = '#25231f';
 
 /** Faction colour, pulled well down so the field reads as WW2 rather than neon. */
-function warpaint(colour) { return mix(colour, '#50504a', 0.72); }
+function warpaint(colour) { return mix(colour, '#4c4c46', 0.78); }
 
 // ------------------------------------------------------------- buildings --
 

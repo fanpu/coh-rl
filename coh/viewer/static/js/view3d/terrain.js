@@ -28,6 +28,7 @@ const WATER = [52, 82, 102];
 const SCORCH = [42, 36, 30];
 
 let px = 8;            // ground-texture pixels per cell
+const TINT_PX = 8;     // territory/cover overlay pixels per cell
 let canvas = null, g2 = null, tex = null;
 let ground = null, tint = null, cover = null, fogPlane = null, surround = null;
 let roadField = null;  // per-cell road coverage, smoothed
@@ -224,7 +225,7 @@ function planeFor(canvasEl, y, opts) {
 function paintTint(frame) {
   const owners = {};
   frame.points.forEach(function (p) { owners[p.id] = p.owner; });
-  const per = 4;
+  const per = TINT_PX;
   const g = tint.userData.ctx;
   const W = R.W, H = R.H;
   g.clearRect(0, 0, W * per, H * per);
@@ -284,7 +285,7 @@ function paintTint(frame) {
 }
 
 function paintCover() {
-  const per = 4;
+  const per = TINT_PX;
   const g = cover.userData.ctx;
   g.clearRect(0, 0, R.W * per, R.H * per);
   [2, 1].forEach(function (level) {
@@ -557,12 +558,12 @@ export function build(scene, mats) {
   scene.add(apron);
   surround = apron;
 
-  const tintCanvas = overlayCanvas(4);
+  const tintCanvas = overlayCanvas(TINT_PX);
   tint = planeFor(tintCanvas, 0.04, { opacity: 0.55 });
   tint.userData.ctx = tintCanvas.getContext('2d');
   scene.add(tint);
 
-  const coverCanvas = overlayCanvas(4);
+  const coverCanvas = overlayCanvas(TINT_PX);
   cover = planeFor(coverCanvas, 0.07, { opacity: 1 });
   cover.userData.ctx = coverCanvas.getContext('2d');
   cover.visible = false;

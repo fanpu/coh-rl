@@ -180,15 +180,29 @@ def test_the_camera_rotates_zooms_and_resets(page3d):
     page3d.evaluate("window.__viewer.seek(0.5)")
     home = page3d.evaluate("window.__viewer.state3d()")
 
-    # Q/E rotate; the loop applies held keys on the next animation frame
-    page3d.keyboard.down("q")
-    page3d.wait_for_timeout(250)
-    page3d.keyboard.up("q")
-    rotated = page3d.evaluate("window.__viewer.state3d()")
-    assert rotated["yaw"] != home["yaw"], (home, rotated)
+    # right-drag rotates, synchronously on the mousemove
+    page3d.mouse.move(490, 330)
+    page3d.mouse.down(button="right")
+    page3d.mouse.move(620, 330)
+    page3d.mouse.up(button="right")
+    dragged = page3d.evaluate("window.__viewer.state3d()")
+    assert dragged["yaw"] != home["yaw"], (home, dragged)
 
-    # the wheel zooms in, and the pitch flattens as it pulls back out
-    page3d.mouse.move(640, 430)
+    # Q/E rotate too, but the held key is applied on animation frames, so poll
+    page3d.keyboard.down("q")
+    try:
+        held = None
+        for _ in range(20):
+            held = page3d.evaluate("window.__viewer.state3d()")
+            if held["yaw"] != dragged["yaw"]:
+                break
+            page3d.wait_for_timeout(100)
+        assert held["yaw"] != dragged["yaw"], (dragged, held)
+    finally:
+        page3d.keyboard.up("q")
+
+    # the wheel zooms in, and the pitch steepens as it comes down
+    page3d.mouse.move(490, 330)
     page3d.mouse.wheel(0, -600)
     zoomed = page3d.evaluate("window.__viewer.state3d()")
     assert zoomed["dist"] < home["dist"]

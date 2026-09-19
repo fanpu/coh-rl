@@ -103,11 +103,13 @@ def main(argv=None) -> int:
                 print("GL:", gl)
                 print("view:", pg.evaluate("window.__viewer.state().view"))
 
-                busiest = busiest_tick(frames)
-                pg.evaluate("window.__viewer.seekTick(%d)" % busiest)
+                tick, (bx, by), n = busiest(frames)
+                print(f"busiest tick {tick}: {n} combat events around ({bx:.0f}, {by:.0f})")
+                pg.evaluate("window.__viewer.seekTick(%d)" % tick)
 
                 # a few camera angles over the busiest moment of the match
-                for name, js in CAMERAS:
+                cams = cameras(bx, by)
+                for name, js in cams:
                     pg.evaluate(js)
                     shot(pg, out / f"{name}.png")
 
@@ -115,10 +117,8 @@ def main(argv=None) -> int:
                 print("fps:", measure_fps(pg))
 
                 if args.docs:
-                    pg.evaluate(CAMERAS[1][1])
+                    pg.evaluate(cams[1][1])
                     shot(pg, DOC_IMAGES / "viewer-3d.png", "(real match)")
-                    for _ in range(3):
-                        pg.keyboard.press("f")
 
                 # fog view
                 pg.keyboard.press("f")
@@ -128,8 +128,30 @@ def main(argv=None) -> int:
                 pg.keyboard.press("f")
                 pg.keyboard.press("f")
 
+                # the 2D tactical map, at the same moment: fitted to the whole
+                # map (which is what a tactical map is for) with the squad in
+                # the thick of it inspected
+                pg.keyboard.press("v")
+                pg.keyboard.press("Home")
+                pg.evaluate(
+                    """(() => {
+                      var f = window.__viewer.frame(), best = null, bd = 1e9;
+                      f.squads.forEach(function (s) {
+                        var d = Math.hypot(s.x - %f, s.y - %f);
+                        if (s.g === undefined && d < bd) { bd = d; best = s; }
+                      });
+                      if (best) window.__viewer.select('squad', best.id);
+                    })()""" % (bx, by)
+                )
+                shot(pg, out / "tactical.png", "(2D)")
+                if args.docs:
+                    shot(pg, DOC_IMAGES / "viewer.png", "(2D tactical map)")
+                pg.keyboard.press("v")
+                pg.evaluate(cams[2][1])
+
                 # the synthetic showcase
                 pg.evaluate(SHOWCASE_JS)
+                pg.evaluate("window.__viewer.camera3(104, 100, 74, 0.35)")
                 shot(pg, out / "showcase.png")
                 if args.docs:
                     shot(pg, DOC_IMAGES / "viewer-3d-showcase.png", "(showcase)")
@@ -144,22 +166,37 @@ def main(argv=None) -> int:
     return 0
 
 
-CAMERAS = [
-    ("overview", "window.__viewer.camera3(96, 96, 190, 0.0)"),
-    ("battle", "window.__viewer.camera3(null, null, 62, 0.5)"),
-    ("close", "window.__viewer.camera3(null, null, 30, 2.2)"),
-    ("low", "window.__viewer.camera3(null, null, 44, 3.9)"),
-]
+def cameras(x, y):
+    """Four looks at the same moment: map, operational, tactical, low angle."""
+    # Every preset states its pitch offset: it is sticky, so a shot taken
+    # after the low-angle one would otherwise inherit its tilt.
+    return [
+        ("overview", "window.__viewer.camera3(96, 96, 190, 0.0, 0)"),
+        ("battle", "window.__viewer.camera3(%f, %f, 58, 0.55, 0)" % (x, y)),
+        ("close", "window.__viewer.camera3(%f, %f, 30, 2.3, 0.05)" % (x, y)),
+        ("low", "window.__viewer.camera3(%f, %f, 40, 3.9, -0.28)" % (x, y)),
+    ]
 
 
-def busiest_tick(frames) -> int:
-    """The frame with the most shot events — where the fight actually is."""
-    best, best_n = 0, -1
+def busiest(frames):
+    """The tick with the most combat, and where on the map it is happening."""
+    best_t, best_n, best_pos = 0, -1, (96.0, 96.0)
     for f in frames["frames"]:
-        n = sum(1 for e in f["events"] if e["k"] in ("shot", "explosion"))
-        if n > best_n:
-            best, best_n = f["t"], n
-    return best
+        pts = []
+        for e in f["events"]:
+            if e["k"] not in ("shot", "explosion", "squad_destroyed"):
+                continue
+            d = e.get("d") or {}
+            p = d.get("src_pos") or d.get("pos") or d.get("dst_pos")
+            if isinstance(p, list) and len(p) == 2:
+                pts.append(p)
+        if pts and len(pts) > best_n:
+            best_t, best_n = f["t"], len(pts)
+            best_pos = (
+                sum(p[0] for p in pts) / len(pts),
+                sum(p[1] for p in pts) / len(pts),
+            )
+    return best_t, best_pos, best_n
 
 
 def measure_fps(pg) -> float:
