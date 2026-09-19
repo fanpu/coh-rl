@@ -7,18 +7,30 @@ bit-for-bit. Every test here is ultimately about `state_hash`.
 
 from __future__ import annotations
 
+import copy
 import json
+from dataclasses import replace
 
 import pytest
 
 from coh.agents import T1Capper
+from coh.data.hashing import data_hash
 from coh.env import CohEnv
-from coh.replay import Replay, load, replay_final_hash, resimulate, save
+from coh.maps.hashing import map_hash
+from coh.replay import (
+    Replay,
+    ReplayError,
+    ReplayMismatchError,
+    load,
+    replay_final_hash,
+    resimulate,
+    save,
+)
 from coh.sim.constants import TICKS_PER_SECOND
 from coh.sim.orders import Move
 from coh.maps.format import load_map
 from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
-from tests.helpers import FIXTURES_DIR, fixture_data
+from tests.helpers import FIXTURES_DIR, fixture_data, make_map
 
 MAP_NAME = "hedgerow_crossing"
 PLAYERS = [PlayerSetup(faction="us", team=0, start_slot=0), PlayerSetup(faction="us", team=1, start_slot=1)]
@@ -173,3 +185,157 @@ def test_replay_falls_back_to_its_recorded_data_dir(tmp_path, match_map):
     restored = load(path)
     # No `data` argument: the replay has to find the tables on its own.
     assert replay_final_hash(restored, game_map=match_map) == restored.final_hash
+
+
+# ---------------------------------------------------------------------------
+# identity: which tables, which map
+# ---------------------------------------------------------------------------
+
+
+def test_replay_records_the_data_and_map_it_was_played_on(tmp_path, match_map):
+    env = play(match_map, 10.0)
+    replay = env.to_replay()
+    assert replay.data_hash == data_hash(fixture_data())
+    assert replay.map_hash == map_hash(match_map)
+
+    path = tmp_path / "match.replay.json"
+    save(replay, path)
+    blob = json.loads(path.read_text())
+    assert blob["data_hash"] == replay.data_hash
+    assert blob["map_hash"] == replay.map_hash
+    assert load(path).data_hash == replay.data_hash
+
+
+def test_map_hash_survives_a_match(match_map):
+    """The sim mutates its own copy, so the caller's map still hashes the same."""
+    before = map_hash(match_map)
+    play(match_map, 10.0)
+    assert map_hash(match_map) == before
+    assert map_hash(load_map(MAP_NAME, footprints=neutral_footprints(fixture_data()))) == before
+
+
+def test_resimulating_against_different_tables_is_refused(match_map):
+    replay = play(match_map, 10.0).to_replay()
+    other = copy.deepcopy(fixture_data())
+    other.weapons["rifle"] = replace(other.weapons["rifle"], damage=999.0)
+
+    with pytest.raises(ReplayMismatchError, match="data"):
+        resimulate(replay, other, match_map)
+
+
+def test_resimulating_against_a_different_map_is_refused(match_map):
+    replay = play(match_map, 10.0).to_replay()
+    with pytest.raises(ReplayMismatchError, match="map"):
+        resimulate(replay, fixture_data(), make_map(data=fixture_data()))
+
+
+def test_a_diverging_final_hash_is_reported(match_map):
+    replay = play(match_map, 10.0).to_replay()
+    replay.final_hash = "0" * 64
+    with pytest.raises(ReplayMismatchError, match="final state"):
+        list(resimulate(replay, fixture_data(), match_map))
+
+
+def test_verification_can_be_switched_off(match_map):
+    replay = play(match_map, 10.0).to_replay()
+    replay.final_hash = "0" * 64
+    replay.map_hash = "nonsense"
+    assert list(resimulate(replay, fixture_data(), match_map, verify=False))
+
+
+def test_a_v1_replay_without_hashes_still_replays(tmp_path, match_map):
+    """Identity fields are optional, so replays recorded before them still run."""
+    path = tmp_path / "match.replay.json"
+    save(play(match_map, 10.0).to_replay(), path)
+    blob = json.loads(path.read_text())
+    del blob["data_hash"]
+    del blob["map_hash"]
+    path.write_text(json.dumps(blob))
+
+    restored = load(path)
+    assert restored.data_hash is None and restored.map_hash is None
+    assert list(resimulate(restored, fixture_data(), match_map))
+
+
+# ---------------------------------------------------------------------------
+# hostile files
+# ---------------------------------------------------------------------------
+
+
+HOSTILE_REPLAYS = [
+    ("not_a_mapping", []),
+    ("missing_map_name", {"version": 1, "players": [], "seed": 0}),
+    (
+        "player_missing_a_field",
+        {
+            "version": 1,
+            "map_name": MAP_NAME,
+            "players": [{"faction": "us", "team": 0}],
+            "seed": 0,
+            "decision_interval_s": 2.0,
+            "orders": [],
+            "final_hash": "x",
+        },
+    ),
+    (
+        "order_entry_is_not_a_triple",
+        {
+            "version": 1,
+            "map_name": MAP_NAME,
+            "players": [],
+            "seed": 0,
+            "decision_interval_s": 2.0,
+            "orders": [[0, 0]],
+            "final_hash": "x",
+        },
+    ),
+    (
+        "order_tick_is_not_a_number",
+        {
+            "version": 1,
+            "map_name": MAP_NAME,
+            "players": [],
+            "seed": 0,
+            "decision_interval_s": 2.0,
+            "orders": [["soon", 0, {"type": "Stop", "squad": 1}]],
+            "final_hash": "x",
+        },
+    ),
+    (
+        "config_has_an_unknown_key",
+        {
+            "version": 1,
+            "map_name": MAP_NAME,
+            "players": [],
+            "seed": 0,
+            "decision_interval_s": 2.0,
+            "config": {"nonsense": 1},
+            "orders": [],
+            "final_hash": "x",
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(("case_id", "blob"), HOSTILE_REPLAYS, ids=[c for c, _ in HOSTILE_REPLAYS])
+def test_malformed_replay_files_raise_replay_error(tmp_path, case_id, blob):
+    path = tmp_path / "hostile.replay.json"
+    path.write_text(json.dumps(blob))
+    with pytest.raises(ReplayError):
+        load(path)
+
+
+def test_truncated_replay_file_raises_replay_error(tmp_path):
+    path = tmp_path / "truncated.replay.json"
+    path.write_text('{"version": 1, "map_name": "hedge')
+    with pytest.raises(ReplayError):
+        load(path)
+
+
+def test_an_unplayable_order_names_the_offending_entry(match_map):
+    replay = play(match_map, 10.0).to_replay()
+    tick, player_id, _order = replay.orders[0]
+    replay.orders[0] = (tick, player_id, {"type": "Teleport", "squad": 1})
+    with pytest.raises(ReplayError) as exc:
+        list(resimulate(replay, fixture_data(), match_map, verify=False))
+    assert "Teleport" in str(exc.value)

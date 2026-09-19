@@ -1,6 +1,10 @@
+from .hashing import data_hash
 from .loader import DataError, load_game_data
 from .schema import (
     COVER_TYPES,
+    FACTIONS,
+    POINT_TYPES,
+    SQUAD_KINDS,
     BuildingDef,
     Cost,
     CoverMods,
@@ -18,6 +22,9 @@ from .schema import (
 
 __all__ = [
     "COVER_TYPES",
+    "FACTIONS",
+    "POINT_TYPES",
+    "SQUAD_KINDS",
     "BuildingDef",
     "Cost",
     "CoverMods",
@@ -32,5 +39,6 @@ __all__ = [
     "TargetMods",
     "UpgradeDef",
     "WeaponDef",
+    "data_hash",
     "load_game_data",
 ]

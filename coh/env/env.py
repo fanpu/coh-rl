@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from coh.data.hashing import data_hash
 from coh.data.loader import load_game_data
 from coh.data.schema import GameData
 from coh.env.observation import Observation, ObservationMemory, build_observation
 from coh.maps.format import GameMap, load_map
+from coh.maps.hashing import map_hash
 from coh.sim.constants import TICKS_PER_SECOND
 from coh.sim.orders import Order, OrderResult, order_to_dict
 from coh.sim.sim import PlayerSetup, Sim, SimConfig, neutral_footprints
@@ -134,12 +136,15 @@ class CohEnv:
         """Snapshot this env's match as a `Replay`.
 
         `data_dir` is recorded as a hint so a replay played on non-packaged
-        stat tables (fixtures, a scraped set) can find them again.
+        stat tables (fixtures, a scraped set) can find them again; the
+        recorded `data_hash` / `map_hash` then pin down *which* tables and
+        map, so a re-simulation on the wrong ones fails loudly.
         """
         from coh.replay.replay import Replay
 
         if self.sim is None:
             raise RuntimeError("CohEnv.to_replay called before reset()")
+        assert self._data is not None and self._map is not None  # set by reset()
         return Replay(
             map_name=self.map_name,
             players=list(self.players),
@@ -150,6 +155,8 @@ class CohEnv:
             final_hash=self.sim.state_hash(),
             final_tick=self.sim.state.tick,
             data_dir=data_dir,
+            data_hash=data_hash(self._data),
+            map_hash=map_hash(self._map),
         )
 
     # -- internals --------------------------------------------------------
