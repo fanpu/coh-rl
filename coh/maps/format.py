@@ -22,9 +22,14 @@ from typing import Any
 import numpy as np
 import yaml
 
-from coh.data.schema import COVER_TYPES
+from coh.data.schema import COVER_TYPES, POINT_TYPES
 
 LIBRARY_DIR = Path(__file__).parent / "library"
+
+# Cell size in meters. This duplicates `coh.sim.constants.CELL_M` on purpose:
+# `coh/maps` must not import `coh/sim` (the dependency runs the other way), so
+# the two are kept equal by `test_map_cell_size_matches_the_sim_constant`.
+CELL_M = 2.0
 
 # COVER_TYPES = ("open", "light", "heavy", "negative", "garrison")
 _COVER_INDEX = {name: i for i, name in enumerate(COVER_TYPES)}
@@ -181,12 +186,12 @@ class GameMap:
 # ---------------------------------------------------------------------------
 
 
-def cell_of(pos: np.ndarray, cell_m: float = 2.0) -> tuple[int, int]:
+def cell_of(pos: np.ndarray, cell_m: float = CELL_M) -> tuple[int, int]:
     """World position (meters, x right / y down) -> (cx, cy)."""
     return (int(pos[0] // cell_m), int(pos[1] // cell_m))
 
 
-def center_of(cell: tuple[int, int], cell_m: float = 2.0) -> np.ndarray:
+def center_of(cell: tuple[int, int], cell_m: float = CELL_M) -> np.ndarray:
     """(cx, cy) -> world position (meters) of the cell's center."""
     cx, cy = cell
     return np.array([(cx + 0.5) * cell_m, (cy + 0.5) * cell_m])
@@ -248,7 +253,7 @@ def map_from_ascii(
     starts: list[dict[str, Any]],
     neutral_buildings: list[dict[str, Any]] = (),
     name: str = "inline",
-    cell_m: float = 2.0,
+    cell_m: float = CELL_M,
     footprints: dict[str, tuple[int, int]] | None = None,
 ) -> GameMap:
     """Convenience wrapper: build the dict form and load it.
@@ -275,7 +280,12 @@ def map_from_ascii(
 
 def _build_map(data: dict[str, Any], footprints: dict[str, tuple[int, int]]) -> GameMap:
     name = data.get("name", "map")
-    cell_m = float(data.get("cell_m", 2.0))
+    cell_m = float(data.get("cell_m", CELL_M))
+    if cell_m != CELL_M:
+        raise MapError(
+            f"{name}: cell_m is {cell_m}, but the simulation grid is {CELL_M} m per cell; "
+            "every distance in the stat tables is in meters on that grid"
+        )
 
     terrain_rows = data.get("terrain")
     sectors_rows = data.get("sectors")
@@ -350,6 +360,8 @@ def _build_map(data: dict[str, Any], footprints: dict[str, tuple[int, int]]) -> 
         cx, cy = p["cell"]
         if not (0 <= cx < width and 0 <= cy < height):
             raise MapError(f"{name}: point {pid!r} cell {(cx, cy)} is out of bounds")
+        if p["type"] not in POINT_TYPES:
+            raise MapError(f"{name}: point {pid!r} has unknown type {p['type']!r}, expected one of {list(POINT_TYPES)}")
         sid = int(sector_id[cy, cx])
         if sid in sector_point:
             raise MapError(
@@ -391,18 +403,27 @@ def _build_map(data: dict[str, Any], footprints: dict[str, tuple[int, int]]) -> 
     if not starts_in:
         raise MapError(f"{name}: at least one start is required")
     starts: list[StartDef] = []
+    seen_slots: set[int] = set()
     for s in starts_in:
+        slot = s["slot"]
+        if slot in seen_slots:
+            raise MapError(f"{name}: start slot {slot} is defined more than once")
+        seen_slots.add(slot)
         cx, cy = s["hq_cell"]
         if not (0 <= cx < width and 0 <= cy < height):
-            raise MapError(f"{name}: start slot {s['slot']} hq_cell {(cx, cy)} is out of bounds")
+            raise MapError(f"{name}: start slot {slot} hq_cell {(cx, cy)} is out of bounds")
         if not pass_inf[cy, cx]:
-            raise MapError(f"{name}: start slot {s['slot']} hq_cell {(cx, cy)} is impassable to infantry")
+            raise MapError(f"{name}: start slot {slot} hq_cell {(cx, cy)} is impassable to infantry")
         sector_ch = s["sector"]
         if sector_ch not in char_to_id:
-            raise MapError(f"{name}: start slot {s['slot']} references unknown sector {sector_ch!r}")
-        starts.append(
-            StartDef(slot=s["slot"], team=s["team"], hq_cell=(cx, cy), sector=char_to_id[sector_ch])
-        )
+            raise MapError(f"{name}: start slot {slot} references unknown sector {sector_ch!r}")
+        actual_ch = sector_chars[int(sector_id[cy, cx])]
+        if actual_ch != sector_ch:
+            raise MapError(
+                f"{name}: start slot {slot} claims sector {sector_ch!r} but its hq_cell {(cx, cy)} "
+                f"lies in sector {actual_ch!r}"
+            )
+        starts.append(StartDef(slot=slot, team=s["team"], hq_cell=(cx, cy), sector=char_to_id[sector_ch]))
 
     game_map = GameMap(
         name=name,

@@ -477,3 +477,58 @@ def test_load_map_from_path(tmp_path):
 def test_load_map_unknown_library_name_raises():
     with pytest.raises(MapError):
         load_map("does_not_exist")
+
+
+# ---------------------------------------------------------------------------
+# validation the sim depends on
+# ---------------------------------------------------------------------------
+
+
+def test_map_cell_size_matches_the_sim_constant():
+    """`coh/maps` may not import `coh/sim`, so the duplicate is pinned here."""
+    from coh.maps.format import CELL_M
+    from coh.sim.constants import CELL_M as SIM_CELL_M
+
+    assert CELL_M == SIM_CELL_M
+
+
+def test_cell_m_other_than_the_sim_cell_size_raises():
+    """`cell_m` used to be parsed and dropped, so a 4 m map loaded as a 2 m one."""
+    d = {
+        "name": "wrong_scale",
+        "cell_m": 4.0,
+        "terrain": TERRAIN,
+        "sectors": SECTORS,
+        "points": POINTS,
+        "neutral_buildings": [],
+        "starts": STARTS,
+    }
+    with pytest.raises(MapError, match="cell_m"):
+        load_map(d)
+
+
+def test_duplicate_start_slot_raises():
+    starts = [
+        {"slot": 0, "team": 0, "hq_cell": [0, 0], "sector": "A"},
+        {"slot": 0, "team": 1, "hq_cell": [11, 0], "sector": "B"},
+    ]
+    with pytest.raises(MapError, match="slot"):
+        make_map(starts=starts)
+
+
+def test_start_sector_must_match_the_sector_under_its_hq_cell():
+    starts = [
+        {"slot": 0, "team": 0, "hq_cell": [0, 0], "sector": "B"},  # (0, 0) is sector A
+        {"slot": 1, "team": 1, "hq_cell": [11, 0], "sector": "B"},
+    ]
+    with pytest.raises(MapError, match="sector"):
+        make_map(starts=starts)
+
+
+def test_unknown_point_type_raises():
+    points = [
+        {"id": "victory_a", "name": "Victory A", "type": "victory", "cell": [1, 1]},
+        {"id": "strategic_b", "name": "Strategic B", "type": "gold_mine", "cell": [8, 1]},
+    ]
+    with pytest.raises(MapError, match="gold_mine"):
+        make_map(points=points)
