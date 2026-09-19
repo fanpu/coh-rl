@@ -10,3 +10,41 @@ uv run pytest
 uv run python scripts/play_match.py
 uv run python -m coh.viewer <replay>
 ```
+
+## Replay viewer
+
+`python -m coh.viewer` re-simulates a replay into a compact frame stream
+(`coh/viewer/frames.py`), then serves it gzipped at `/frames.json` next to the
+dependency-free canvas app in `viewer/`. Replays store only the order log, so
+the frames are rebuilt exactly, not stored.
+
+```
+uv run python scripts/play_match.py --map hedgerow_crossing \
+    --p0 t1 --p1 t1 --seed 0 --data-dir tests/data/fixtures --out match.replay.json
+uv run python -m coh.viewer match.replay.json --data-dir tests/data/fixtures
+# open http://127.0.0.1:8000/
+```
+
+![The viewer mid-match](docs/img/viewer.png)
+
+Territory is tinted and outlined by the owning team, squads are drawn as one
+dot per living model in the sim's own formation, vehicles get a rotated hull
+and a turret line, team weapons show their set-up arc, and shots, explosions,
+captures and deaths animate from the sim's event log. The HUD tracks manpower,
+munitions, fuel, population and victory tickets; click any squad or building to
+inspect its frame fields.
+
+Press `F` to cycle the fog of war between omniscient, team 0's view and team
+1's view — enemies standing in cells that team cannot see are hidden and unseen
+ground is dimmed:
+
+![The same moment through team 0's fog of war](docs/img/viewer-fog.png)
+
+Controls: space play/pause, `←`/`→` step a frame, `+`/`−` speed (0.5×–16×),
+scrub the timeline (capture and kill ticks are marked), wheel to zoom, drag to
+pan, `C` cover overlay, `G` sector borders and names, `Home` to reset the
+camera, `?` for the full legend.
+
+Options: `--port`, `--data-dir` (defaults to the replay's own hint), `--every N`
+to change the snapshot rate, and `--no-serve --out frames.json.gz` to write the
+stream instead of serving it.
