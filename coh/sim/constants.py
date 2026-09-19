@@ -18,3 +18,14 @@ VISION_MASK_CACHE_MAX = 4096
 # A vehicle only advances while its heading is within this many degrees of its
 # desired travel direction; otherwise it spends the tick rotating in place.
 VEHICLE_MOVE_ARC_DEG = 45.0
+
+# A building starts construction at this fraction of its full HP and gains the
+# rest in proportion to construction progress (structural, not a balance knob).
+CONSTRUCTION_START_HP_FRAC = 0.1
+
+# How close (in cells, to the nearest footprint edge) a builder must be before
+# it starts contributing construction progress.
+BUILD_RANGE_CELLS = 1.5
+
+# Maximum number of queued train/research items per building.
+MAX_QUEUE_LEN = 5

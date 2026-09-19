@@ -9,7 +9,7 @@ buildings:
     target_type: building_heavy
     footprint: [4, 4]
     produces: [engineers]
-    researches: [research_1]
+    researches: [research_1, supply_yard]
     requires: []
     is_hq: true
     reinforce_radius: 20
@@ -22,8 +22,8 @@ buildings:
     hp: 1000
     target_type: building_heavy
     footprint: [4, 4]
-    produces: []
-    researches: []
+    produces: [pioneers]
+    researches: [phase_2]
     requires: []
     is_hq: true
     reinforce_radius: 20
@@ -70,3 +70,36 @@ buildings:
     is_hq: false
     reinforce_radius: 0
     sight: 15
+
+  # Task 14 fixture: a miniature two-tier tech tree per faction.
+  # US gates its tier-2 building on a *building* (barracks -> tank_depot);
+  # Wehrmacht gates it on a researched *upgrade* (phase_2 -> panzer_command).
+  # Both produce the shared `tank` fixture squad (faction is enforced on the
+  # producing building, not on the unit it spits out).
+  tank_depot:
+    faction: us
+    cost: {manpower: 300, fuel: 60}
+    build_time: 40
+    hp: 800
+    target_type: building_light
+    footprint: [3, 3]
+    produces: [tank]
+    researches: []
+    requires: [barracks]
+    is_hq: false
+    reinforce_radius: 0
+    sight: 20
+
+  panzer_command:
+    faction: wehr
+    cost: {manpower: 300, fuel: 60}
+    build_time: 40
+    hp: 800
+    target_type: building_light
+    footprint: [3, 3]
+    produces: [tank]
+    researches: []
+    requires: [phase_2]
+    is_hq: false
+    reinforce_radius: 0
+    sight: 20

@@ -301,12 +301,13 @@ def test_stop_clears_order_path_and_target():
     assert squad.target_id is None
 
 
-def test_building_orders_are_accepted_without_effect():
+def test_building_orders_enqueue():
     sim = make_sim()
     hq = sim.state.buildings[sim.state.players[0].hq_id]
+    sim.state.players[0].munitions = 500
     results = sim.issue(0, [Train(building=hq.id, unit="engineers"), Research(building=hq.id, upgrade="research_1")])
     assert all(r.ok for r in results)
-    assert hq.queue == []
+    assert [(q.kind, q.item_id) for q in hq.queue] == [("train", "engineers"), ("research", "research_1")]
 
 
 def test_order_on_another_players_building_is_rejected():

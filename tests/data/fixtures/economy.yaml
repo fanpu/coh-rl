@@ -9,7 +9,7 @@ economy:
   base_population: 20
   max_population: 100
   point_income:
-    strategic: {manpower: 8}
+    strategic: {manpower: 8, population: 2}
     munitions_low: {munitions: 4}
     munitions_med: {munitions: 8}
     munitions_high: {munitions: 12}

@@ -361,17 +361,19 @@ def test_garrison_with_unknown_building_is_rejected():
 def test_build_walks_adjacent_to_the_target_footprint_and_keeps_its_order():
     sim = make_sim()
     squad = spawn(sim, 0, "engineers", (10, 10))
-    order = Build(squad=squad.id, structure="barracks", cell=(15, 15))
+    order = Build(squad=squad.id, structure="barracks", cell=(8, 12))  # sector 'a', team 0's supply
     (result,) = sim.issue(0, [order])
     assert result.ok
 
     sim.run(100)
 
-    assert squad.state is SquadState.IDLE
+    # The Build order survives arrival; production (task 14) then takes the
+    # squad from IDLE to CONSTRUCTING on the site it walked to.
+    assert squad.state is SquadState.CONSTRUCTING
     assert squad.order == order
     w, h = sim.data.buildings["barracks"].footprint
     cx, cy = cell_of(squad.pos)
-    assert (14) <= cx <= (15 + w) and (14) <= cy <= (15 + h)
+    assert (7) <= cx <= (8 + w) and (11) <= cy <= (12 + h)
 
 
 # --------------------------------------------------------------------------
