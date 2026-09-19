@@ -112,6 +112,22 @@ def deadline(seconds: float, what: str):
 CHROMIUM = find_chromium()
 DOC_IMAGES = Path(__file__).resolve().parents[2] / "docs" / "img"
 
+# A screenshot is never byte-identical across machines (fonts, GL backend,
+# driver), so a test that writes into `docs/img/` leaves the tree dirty after
+# every run. Tests write to their own `tmp_path` and only refresh the
+# documented images when this is explicitly asked for:
+#
+#     COH_REFRESH_DOCS_IMG=1 uv run pytest tests/viewer -q
+REFRESH_DOCS_IMG = os.environ.get("COH_REFRESH_DOCS_IMG") == "1"
+
+
+def doc_image(name: str, fallback: Path) -> Path:
+    """Where a documented screenshot should be written this run."""
+    if not REFRESH_DOCS_IMG:
+        return fallback / name
+    DOC_IMAGES.mkdir(parents=True, exist_ok=True)
+    return DOC_IMAGES / name
+
 MATCH_S = 120.0          # long enough for captures, training and firefights
 ACTION_MS = 15_000       # any single Playwright action
 NAV_MS = 20_000          # page load

@@ -24,6 +24,7 @@ from tests.helpers import fixture_data
 from tests.viewer.conftest import (
     BROWSER_ENV,
     CHROMIUM,
+    REFRESH_DOCS_IMG,
     LAUNCH_ARGS,
     NAV_MS,
     DOC_IMAGES,
@@ -70,7 +71,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--replay", default=None, help="a replay JSON to render (default: a fresh fixture match)")
     ap.add_argument("--out", default="/tmp/shots", help="directory for the screenshots")
-    ap.add_argument("--docs", action="store_true", help="also write docs/img/viewer-3d*.png")
+    ap.add_argument(
+        "--docs",
+        action="store_true",
+        default=REFRESH_DOCS_IMG,
+        help="also refresh docs/img/* (or set COH_REFRESH_DOCS_IMG=1)",
+    )
     ap.add_argument("--every", type=int, default=2)
     args = ap.parse_args(argv)
 

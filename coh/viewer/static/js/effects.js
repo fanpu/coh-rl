@@ -31,6 +31,9 @@ export const EVENT_EFFECTS = {
   building_completed: { ticks: 16, mode: 'ripple', colour: '#7fbf6a', radius: 6 },
   research_completed: { ticks: 16, mode: 'ripple', colour: '#9fc4e8', radius: 5 },
   upgrade_bought: { ticks: 14, mode: 'ripple', colour: '#d8b45a', radius: 2.5 },
+  // a trained unit with nowhere to stand: nothing happens on the map, so say
+  // so in words over the building that is stuck
+  unit_blocked: { ticks: 28, mode: 'badge', colour: '#e2705f', text: 'blocked' },
   point_captured: { ticks: 16, mode: null },     // pulse drawn with the point
   point_neutralized: { ticks: 16, mode: null },  // pulse drawn with the point
   game_over: { ticks: 1, mode: null }            // winner banner, see hud.js
