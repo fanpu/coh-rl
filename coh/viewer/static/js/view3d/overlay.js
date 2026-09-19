@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { S } from '../state.js';
-import { R, isFootprintVisible, playerColour, squadHidden, teamColour } from '../data.js';
+import { R, eventPos, isFootprintVisible, playerColour, squadHidden, teamColour } from '../data.js';
 import { clamp, title } from '../util.js';
 
 let cv = null, ctx = null, width = 0, height = 0;
@@ -44,11 +44,22 @@ function barColour(frac) {
   return frac > 0.6 ? '#7fbf6a' : (frac > 0.3 ? '#d8b45a' : '#e2705f');
 }
 
-export function draw(camera, frame, squads, buildings) {
+export function draw(camera, frame, squads, buildings, effects) {
   ctx.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
   boxes = [];
   badges = 0;
+
+  // Events with no visual of their own — a trained unit with nowhere to stand
+  // — say so in words over the thing that is stuck.
+  (effects || []).forEach(function (e) {
+    if (!e.spec || e.spec.mode !== 'badge') return;
+    if (e.age > 0.5 && Math.floor(e.age * 8) % 2 === 0) return;
+    const w = eventPos(e, frame);
+    if (!w) return;
+    const p = project(camera, w[0], 4.4, w[1]);
+    if (p) label(e.spec.text, p[0], p[1], e.spec.colour, '700 11px system-ui, sans-serif');
+  });
 
   // Farthest first, so a nearer unit's bar wins the collision test.
   const ordered = squads

@@ -15,6 +15,8 @@ proxy volumes a click is tested against.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from tests.viewer.conftest import (  # noqa: F401  (fixtures are used by name)
@@ -178,6 +180,7 @@ def test_stepping_frames_changes_the_rendered_image(page3d):
 @needs_chromium
 def test_the_camera_rotates_zooms_and_resets(page3d):
     page3d.evaluate("window.__viewer.seek(0.5)")
+    page3d.keyboard.press("Home")
     home = page3d.evaluate("window.__viewer.state3d()")
 
     # right-drag rotates, synchronously on the mousemove
@@ -460,8 +463,78 @@ def test_without_webgl_the_page_falls_back_to_the_2d_map_with_a_notice(browser, 
         assert pg.locator("#cv3").is_hidden()
         assert pg.locator("#notice").is_visible()
         assert "webgl" in pg.locator("#notice-msg").inner_text().lower()
-        # and the tactical map really is drawing
+        # and the tactical map really is drawing (redraw first: `stats()`
+        # reports the last render, and the page may not have had one yet)
+        pg.evaluate("window.__viewer.redraw()")
         assert pg.evaluate("window.__viewer.stats().buildings") > 0
         assert errors == []
+    finally:
+        pg.close()
+
+
+@needs_chromium
+def test_a_blocked_unit_is_announced_over_the_building(page3d):
+    """`unit_blocked` has no effect on the map, so it has to be words.
+
+    The showcase blocks a rifle squad coming out of barracks #913; the badge
+    must land on the overlay, in its own colour, near that building.
+    """
+    page3d.evaluate(SHOWCASE_JS)
+    page3d.evaluate("window.__viewer.redraw()")
+    found = page3d.evaluate(
+        """(() => {
+          // barracks #913 sits at cell (33, 50) with a 3x3 footprint
+          var p = window.__viewer.screenOf((33 + 1.5) * 2, (50 + 1.5) * 2);
+          var ov = document.getElementById('ov');
+          var g = ov.getContext('2d');
+          var dpr = window.devicePixelRatio > 2 ? 2 : (window.devicePixelRatio || 1);
+          var x = Math.max(0, Math.round((p[0] - 70) * dpr));
+          var y = Math.max(0, Math.round((p[1] - 80) * dpr));
+          var w = Math.min(Math.round(140 * dpr), ov.width - x);
+          var h = Math.min(Math.round(110 * dpr), ov.height - y);
+          if (w <= 0 || h <= 0) return {onScreen: false};
+          var d = g.getImageData(x, y, w, h).data;
+          var warm = 0, any = 0;
+          for (var i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 100) continue;
+            any++;
+            // the badge is #e2705f: clearly red-dominant, unlike the cream labels
+            if (d[i] > 150 && d[i] - d[i + 1] > 45 && d[i] - d[i + 2] > 35) warm++;
+          }
+          return {onScreen: true, warm: warm, any: any};
+        })()"""
+    )
+    assert found["onScreen"], "the barracks projected off screen"
+    assert found["warm"] > 20, "no 'blocked' badge over the stuck barracks: %s" % found
+    assert page3d.errors == []
+
+
+@needs_chromium
+def test_the_opening_shot_is_close_enough_to_see_individual_soldiers(browser, viewer_url):
+    """On load the camera looks down the watched team's axis, not at the map.
+
+    This needs its own page: the thing under test is the state the viewer opens
+    in, which is exactly what the shared page's `Home` reset throws away.
+    """
+    pg = open_page(browser, viewer_url, view="3d", width=980, height=660)
+    try:
+        wait_loaded(pg)
+        if pg.evaluate("window.__viewer.state().view") != "3d":
+            pytest.skip("this browser has no WebGL")
+        opening = pg.evaluate("window.__viewer.state3d()")
+        pg.keyboard.press("Home")
+        whole_map = pg.evaluate("window.__viewer.state3d()")
+
+        assert opening["dist"] < whole_map["dist"] / 2, (opening, whole_map)
+        # a 1.8 m figure at this height is tens of pixels tall, not one or two
+        height = pg.evaluate("window.innerHeight")
+        metres = 2 * opening["dist"] * math.tan(math.radians(42) / 2)
+        assert metres < 70, "opening zoom is too far out: %.0f m of ground" % metres
+        assert height / metres * 1.8 > 15, "a soldier would be under 15 px tall"
+        # and it is looking somewhere inside the map, not off the edge
+        size = pg.evaluate("window.__viewer.mapSize()")
+        assert 0 <= opening["x"] <= size["W"] * size["cell"], opening
+        assert 0 <= opening["y"] <= size["H"] * size["cell"], opening
+        assert pg.errors == []
     finally:
         pg.close()

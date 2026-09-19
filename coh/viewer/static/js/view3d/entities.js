@@ -28,7 +28,8 @@ const pickRoot = new THREE.Group();   // proxy volumes, never rendered
 const soldierPools = new Map();   // colour -> InstancedMesh
 let props = null;                 // per-entity baked meshes, keyed below
 const cache = new Map();          // key -> {node, key}
-let selectionRing = null, hoverRing = null;
+let selectionRing = null, hoverRing = null, footRings = null;
+let footCount = 0;
 let arcs = [];                    // pooled arc wedges
 let proxyPool = [];
 let stats = { units: 0, buildings: 0, ghosts: 0, points: 0, soldiers: 0 };
@@ -39,10 +40,19 @@ const _e = new THREE.Euler();
 const _v = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _q2 = new THREE.Quaternion();
+const _col = new THREE.Color();
 
 const MAX_ARCS = 24;
 const MAX_PROXIES = 400;
 const SOLDIER_CAP = 600;
+const RING_CAP = 200;
+
+/* Figures are drawn larger than life. A 1.8 m man on a 192 m map is a few
+ * pixels at any camera height you would actually play at, so — like every RTS
+ * — the models are exaggerated until a squad reads as individual soldiers
+ * rather than a smudge. Positions and formation offsets stay true to the sim;
+ * only the model is scaled. */
+const FIGURE_SCALE = 1.75;
 
 export function build(scene) {
   root = new THREE.Group();
@@ -50,7 +60,22 @@ export function build(scene) {
   props = new THREE.Group();
   root.add(props);
 
-  const ringGeo = new THREE.RingGeometry(0.9, 1.0, 36);
+  /* Every squad stands on a thin team-coloured ring. It is the single
+   * strongest ownership cue from a pitched camera — better than unit colour,
+   * which is half in shadow — and it is what makes a firefight legible at the
+   * default zoom. The selection ring below is the same idea, brighter. */
+  const footGeo = new THREE.RingGeometry(0.80, 1.0, 28);
+  footGeo.rotateX(-Math.PI / 2);
+  footRings = new THREE.InstancedMesh(footGeo, new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, fog: false
+  }), RING_CAP);
+  footRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  footRings.frustumCulled = false;
+  footRings.renderOrder = 3;
+  footRings.count = 0;
+  root.add(footRings);
+
+  const ringGeo = new THREE.RingGeometry(0.88, 1.06, 36);
   ringGeo.rotateX(-Math.PI / 2);
   selectionRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
     color: 0xf2e9c8, transparent: true, opacity: 0.9, depthWrite: false, fog: false
@@ -73,7 +98,7 @@ export function dispose(scene) {
     scene.remove(root);
     root.traverse(function (o) { if (o.geometry) o.geometry.dispose(); });
   }
-  root = props = null;
+  root = props = footRings = null;
   soldierPools.clear();
   cache.clear();
   arcs = [];
@@ -148,6 +173,7 @@ function proxy(kind, id, x, y, z, sx, sy, sz) {
 export function update(frame, squads, buildings, effects, allEffects, time) {
   stats = { units: 0, buildings: 0, ghosts: 0, points: 0, soldiers: 0 };
   proxyCount = 0;
+  footCount = 0;
   soldierPools.forEach(function (m) { m.userData.n = 0; });
   let arcCount = 0;
 
@@ -181,6 +207,9 @@ export function update(frame, squads, buildings, effects, allEffects, time) {
     stats.soldiers += mesh.count;
     mesh.instanceMatrix.needsUpdate = true;
   });
+  footRings.count = footCount;
+  footRings.instanceMatrix.needsUpdate = true;
+  if (footRings.instanceColor) footRings.instanceColor.needsUpdate = true;
   for (let i = arcCount; i < arcs.length; i++) arcs[i].visible = false;
   for (let i = proxyCount; i < proxyPool.length; i++) proxyPool[i].visible = false;
 
@@ -190,10 +219,10 @@ export function update(frame, squads, buildings, effects, allEffects, time) {
 
 // --------------------------------------------------------------- squads --
 
-function soldierPool(colour) {
+function soldierPool(colour, faction) {
   let mesh = soldierPools.get(colour);
   if (!mesh) {
-    const geo = models.buildGeometry('soldier', { colour: colour });
+    const geo = models.buildGeometry('soldier', { colour: colour, faction: faction });
     mesh = new THREE.InstancedMesh(geo, materials.unit, SOLDIER_CAP);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.castShadow = true;
@@ -207,8 +236,8 @@ function soldierPool(colour) {
 }
 
 /** One figure, posed for the squad's suppression state. */
-function soldier(colour, x, z, heading, pose, bob, seed) {
-  const mesh = soldierPool(colour);
+function soldier(colour, faction, x, z, heading, pose, bob) {
+  const mesh = soldierPool(colour, faction);
   const n = mesh.userData.n;
   if (n >= SOLDIER_CAP) return;
   let y = 0, pitch = 0, scaleY = 1, ry = -heading;
@@ -229,15 +258,32 @@ function soldier(colour, x, z, heading, pose, bob, seed) {
     _e.set(0, 0, -pitch);
     _q.multiply(_q2.setFromEuler(_e));
   }
-  _v.set(x, y, z);
-  _s.set(1, scaleY, 1);
+  _v.set(x, y * FIGURE_SCALE, z);
+  _s.set(FIGURE_SCALE, scaleY * FIGURE_SCALE, FIGURE_SCALE);
   _m.compose(_v, _q, _s);
   mesh.setMatrixAt(n, _m);
   mesh.userData.n = n + 1;
 }
 
+/** The team ring this squad stands on. */
+function footRing(s, colour) {
+  if (footCount >= RING_CAP) return;
+  const r = s.kind === 'vehicle' ? 3.4 : (s.kind === 'team_weapon' ? 2.6 : 2.4);
+  _e.set(0, 0, 0);
+  _q.setFromEuler(_e);
+  _v.set(s.x, 0.08, s.y);
+  _s.set(r, 1, r);
+  _m.compose(_v, _q, _s);
+  footRings.setMatrixAt(footCount, _m);
+  footRings.setColorAt(footCount, _col.setStyle(mix(colour, '#171713', 0.18)));
+  footCount++;
+}
+
 function drawSquad(s, time, recoil) {
   const colour = s.ab ? '#8f8a7c' : playerColour(s.o);
+  const player = (R.D.players || [])[s.o];
+  const faction = player ? player.faction : '';
+  footRing(s, colour);
   const offsets = (R.D.meta && R.D.meta.formation_offsets) || [[0, 0]];
   const cos = Math.cos(s.h), sin = Math.sin(s.h);
   const pose = s.sup || 0;
@@ -283,7 +329,7 @@ function drawSquad(s, time, recoil) {
     const ox = off[0] * cos - off[1] * sin;
     const oz = off[0] * sin + off[1] * cos;
     const bob = moving ? Math.abs(Math.sin(time * 7 + i * 1.7 + s.id)) * 0.09 : 0;
-    soldier(colour, s.x + ox, s.y + oz, s.h, pose, bob, i);
+    soldier(colour, faction, s.x + ox, s.y + oz, s.h, pose, bob);
   }
   proxy('squad', s.id, s.x, 1.0, s.y, 4.4, 2.2, 4.4);
 }
@@ -516,7 +562,7 @@ function drawPoints(frame, effects) {
     const ring = g.userData.ring;
     const capturing = st.c === null || st.c === undefined ? null : st.c;
     ring.material.color.set(capturing !== null ? teamColour(capturing) : colour);
-    ring.material.opacity = st.progress > 0 && st.progress < 1 ? 0.85 : 0.35;
+    ring.material.opacity = st.progress > 0 && st.progress < 1 ? 0.8 : 0.22;
     ring.scale.setScalar(st.progress > 0 && st.progress < 1 ? 0.75 + st.progress * 0.35 : 1);
 
     if (pulses[def.id] !== undefined) pulseRing(x, z, pulses[def.id], victory);
