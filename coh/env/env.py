@@ -28,7 +28,7 @@ from coh.env.observation import Observation, ObservationMemory, build_observatio
 from coh.maps.format import GameMap, load_map
 from coh.maps.hashing import map_hash
 from coh.sim.constants import TICKS_PER_SECOND
-from coh.sim.orders import Order, OrderResult, order_from_dict, order_to_dict
+from coh.sim.orders import Order, OrderResult, normalized, order_from_dict, order_to_dict, payload_problem
 from coh.sim.sim import PlayerSetup, Sim, SimConfig, neutral_footprints
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -143,7 +143,16 @@ class CohEnv:
                     results.append(OrderResult(ok=False, reason=f"not an order: {entry!r}"))
                     continue
                 results.append(next(issued))
-                self.order_log.append((tick, player_id, order_to_dict(order)))
+                # Log the normalized order (plain Python types: a numpy-typed
+                # Move(cell=(np.int64(4), np.int64(5))) must not put an
+                # np.int64 in a JSON-bound log). An order whose payload does
+                # not even have the right shape after normalizing (e.g. a
+                # non-numeric squad id) is not JSON-safe either way, so it is
+                # counted invalid above but left out of the log rather than
+                # poisoning it.
+                canonical = normalized(order)
+                if not payload_problem(canonical):
+                    self.order_log.append((tick, player_id, order_to_dict(canonical)))
 
             info = infos.setdefault(player_id, {"invalid_orders": 0, "results": []})
             info["results"] = results

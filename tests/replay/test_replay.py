@@ -27,7 +27,7 @@ from coh.replay import (
     save,
 )
 from coh.sim.constants import TICKS_PER_SECOND
-from coh.sim.orders import Move
+from coh.sim.orders import AttackMove, Move, SetFacing, Train
 from coh.maps.format import load_map
 from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
 from tests.helpers import FIXTURES_DIR, fixture_data, make_map
@@ -84,6 +84,70 @@ def test_save_load_resimulate_reproduces_the_final_hash(tmp_path, match_map):
     assert restored.orders == replay.orders
     assert restored.final_hash == replay.final_hash
     assert replay_final_hash(restored, fixture_data(), match_map) == replay.final_hash
+
+
+class _NumpyfyingAgent:
+    """Wraps an agent, converting its `Move` / `AttackMove` / `SetFacing` /
+    `Train` orders to numpy-typed fields -- exactly what an RL policy hands
+    back. `env.order_log` (and therefore a saved replay) must stay plain
+    Python / JSON-safe regardless."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def reset(self, player_id, match_map, data) -> None:
+        self._inner.reset(player_id, match_map, data)
+
+    def act(self, obs):
+        import numpy as np
+
+        out = []
+        for order in self._inner.act(obs):
+            if isinstance(order, Move):
+                order = replace(order, squad=np.int64(order.squad), cell=(np.int64(order.cell[0]), np.int64(order.cell[1])))
+            elif isinstance(order, AttackMove):
+                order = replace(order, squad=np.int64(order.squad), cell=np.array(order.cell))
+            elif isinstance(order, SetFacing):
+                order = replace(order, squad=np.int64(order.squad), direction_deg=np.float32(order.direction_deg))
+            elif isinstance(order, Train):
+                order = replace(order, building=np.int64(order.building))
+            out.append(order)
+        return out
+
+
+def test_numpy_typed_orders_from_an_rl_policy_still_replay(tmp_path, match_map):
+    """A policy that hands back numpy scalars must not poison the replay:
+    `to_replay()` -> `save()` -> `load()` -> `resimulate(verify=True)` still
+    reproduces the final hash, and the saved JSON contains no numpy types."""
+    pytest.importorskip("numpy")
+    data = fixture_data()
+    env = CohEnv(
+        map_name=MAP_NAME,
+        players=list(PLAYERS),
+        seed=0,
+        config=SimConfig(time_limit_s=3600.0),
+        data=data,
+        game_map=match_map,
+    )
+    agents = [_NumpyfyingAgent(T1Capper()), T1Capper()]
+    obs = env.reset()
+    for player_id, agent in enumerate(agents):
+        agent.reset(player_id, match_map, data)
+
+    done = False
+    while not done and env.sim.state.tick < 30.0 * TICKS_PER_SECOND:
+        obs, _rewards, done, _infos = env.step({pid: agents[pid].act(obs[pid]) for pid in env.player_ids})
+
+    assert env.order_log, "the bots should have issued orders in 30 s"
+    json.dumps(env.order_log)  # the defect under test: must not raise
+
+    replay = env.to_replay()
+    path = tmp_path / "numpy.replay.json"
+    save(replay, path)
+    restored = load(path)
+
+    replayed = list(resimulate(restored, data, match_map, verify=True))
+    assert replayed[-1].state_hash() == env.sim.state_hash() == replay.final_hash
 
 
 def test_replay_json_is_plain_and_versioned(tmp_path, match_map):

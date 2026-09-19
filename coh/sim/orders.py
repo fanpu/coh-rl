@@ -204,30 +204,42 @@ def _is_real(value: Any) -> bool:
 
 
 def _as_cell(value: Any) -> Any:
-    """`[4, 5]` (JSON) or `(np.int64(4), np.int64(5))` -> `(4, 5)`; anything
-    else is returned untouched for `payload_problem` to reject."""
+    """`[4, 5]` (JSON), `(np.int64(4), np.int64(5))`, or `np.array([4, 5])` ->
+    `(4, 5)`; anything else is returned untouched for `payload_problem` to
+    reject."""
+    if isinstance(value, np.ndarray):
+        if value.ndim == 1 and value.shape[0] == 2 and all(_is_int(v) for v in value):
+            return (int(value[0]), int(value[1]))
+        return value
     if isinstance(value, (tuple, list)) and len(value) == 2 and all(_is_int(v) for v in value):
         return (int(value[0]), int(value[1]))
     return value
 
 
 def normalized(order: Order) -> Order:
-    """`order` with its cell fields in canonical `(int, int)` form.
+    """`order` with every field canonicalized to plain Python types.
 
     JSON (and `order_from_dict`'s callers) hand cells over as lists, and a
-    numpy-flavoured policy hands over `np.int64`; order equality and the state
-    hash both want plain int tuples. Anything that is not cell-shaped is left
-    alone — `payload_problem` is what rejects it.
+    numpy-flavoured policy hands over `np.int64` / `np.float32` / a 1-D numpy
+    array for a cell; order equality and the state hash both want plain
+    Python `int` / `float` / `(int, int)` tuples. A value that does not
+    already satisfy the field's shape (`_is_int` / `_is_real` / a two-long
+    int-like pair) is left alone — `payload_problem` is what rejects it.
     """
     spec = FIELD_KINDS.get(type(order))
     if spec is None:
         return order  # not a known order: `validate_order` rejects it
     changes = {}
     for name, kind in spec:
-        if kind is not _CELL:
-            continue
         value = getattr(order, name)
-        canonical = _as_cell(value)
+        if kind is _CELL:
+            canonical = _as_cell(value)
+        elif kind is _INT:
+            canonical = int(value) if _is_int(value) else value
+        elif kind is _REAL:
+            canonical = float(value) if _is_real(value) else value
+        else:  # _STR: strings are already plain Python
+            canonical = value
         if canonical is not value:
             changes[name] = canonical
     return replace(order, **changes) if changes else order

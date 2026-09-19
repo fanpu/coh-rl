@@ -9,7 +9,7 @@ import pytest
 from coh.env import CohEnv, build_observation
 from coh.maps.format import center_of
 from coh.sim.constants import TICKS_PER_SECOND
-from coh.sim.orders import Capture, Move, Train
+from coh.sim.orders import AttackMove, Capture, Move, SetFacing, Train
 from coh.sim.sim import PlayerSetup, SimConfig
 from tests.helpers import fixture_data, make_map
 
@@ -353,6 +353,48 @@ def test_junk_in_an_agents_order_list_counts_as_invalid_and_is_skipped(env):
     # Only the two real orders reached the sim, so only they were logged.
     assert [entry[2]["type"] for entry in env.order_log] == ["Move", "Stop"]
     assert env.sim.state.players[0].invalid_orders == 0
+
+
+def test_numpy_typed_orders_are_logged_as_plain_python_types(env):
+    """An RL policy hands back numpy scalars; `order_log` must stay JSON-safe.
+
+    `Move(squad=np.int64(1), cell=(np.int64(4), np.int64(5)))` passes the
+    payload gate (numpy ints satisfy `numbers.Integral`), so the sim accepts
+    it -- but the *logged* order must be the normalized (plain-int) form, or
+    `json.dumps(env.order_log)` raises on the `np.int64`.
+    """
+    np = pytest.importorskip("numpy")
+
+    env.reset()
+    squad = next(s for s in env.sim.state.squads.values() if s.owner == 0)
+    hq = env.sim.state.players[0].hq_id
+
+    # `SetFacing` on a non-team-weapon squad fails validation, but that is
+    # irrelevant here: the order still has a well-formed payload, so it is
+    # still counted (and logged) -- exactly what this test is checking.
+    numpy_orders = [
+        Move(squad=np.int64(squad.id), cell=(np.int64(10), np.int64(10))),
+        AttackMove(squad=np.int64(squad.id), cell=np.array([11, 11])),
+        Train(building=np.int64(hq), unit="rifles"),
+        SetFacing(squad=np.int64(squad.id), direction_deg=np.float32(45.0)),
+    ]
+    plain_orders = [
+        Move(squad=squad.id, cell=(10, 10)),
+        AttackMove(squad=squad.id, cell=(11, 11)),
+        Train(building=hq, unit="rifles"),
+        SetFacing(squad=squad.id, direction_deg=45.0),
+    ]
+
+    env.step({0: numpy_orders})
+    logged = list(env.order_log)
+
+    # JSON-safe: this is the defect under test.
+    json.dumps(logged)
+
+    other = make_env()
+    other.reset()
+    other.step({0: plain_orders})
+    assert [entry[2] for entry in logged] == [entry[2] for entry in other.order_log]
 
 
 # ---------------------------------------------------------------------------

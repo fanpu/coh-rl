@@ -245,3 +245,53 @@ def test_an_out_of_bounds_list_cell_is_still_out_of_bounds():
     (result,) = sim.issue(0, [Move(squad.id, [-1, 0])])
     assert not result.ok
     assert "out of bounds" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# numpy-typed orders from an RL policy
+# ---------------------------------------------------------------------------
+
+
+def test_numpy_typed_valid_orders_hash_the_same_as_plain_int_orders():
+    """`numbers.Integral` / `numbers.Real` let numpy scalars past the payload
+    gate; whatever the sim then stores must hash exactly like the plain-int
+    equivalent, or two runs of the same match diverge on dtype alone."""
+    np = pytest.importorskip("numpy")
+
+    numpy_sim, numpy_squad, numpy_weapon, numpy_hq = _sim_with_entities()
+    numpy_sim.issue(
+        0,
+        [
+            Move(np.int64(numpy_squad.id), (np.int64(12), np.int64(12))),
+            SetFacing(np.int64(numpy_weapon.id), np.float32(90.0)),
+            Train(np.int64(numpy_hq.id), "rifles"),
+        ],
+    )
+    numpy_sim.state_hash()  # must not raise
+    numpy_sim.run(5)
+    numpy_hash = numpy_sim.state_hash()
+
+    plain_sim, plain_squad, plain_weapon, plain_hq = _sim_with_entities()
+    plain_sim.issue(
+        0,
+        [
+            Move(plain_squad.id, (12, 12)),
+            SetFacing(plain_weapon.id, 90.0),
+            Train(plain_hq.id, "rifles"),
+        ],
+    )
+    plain_sim.run(5)
+    plain_hash = plain_sim.state_hash()
+
+    assert numpy_hash == plain_hash
+    assert isinstance(numpy_sim.state.squads[numpy_squad.id].order.cell[0], int)
+
+
+def test_a_1d_numpy_array_cell_is_accepted_and_normalized_to_a_tuple():
+    np = pytest.importorskip("numpy")
+
+    sim, squad, weapon, hq = _sim_with_entities()
+    (result,) = sim.issue(0, [Move(squad.id, np.array([12, 12]))])
+    assert result.ok
+    assert sim.state.squads[squad.id].order == Move(squad.id, (12, 12))
+    assert isinstance(sim.state.squads[squad.id].order.cell, tuple)
