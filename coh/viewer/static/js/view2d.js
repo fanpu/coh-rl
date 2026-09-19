@@ -15,7 +15,7 @@ import {
   offscreen, parseColour, shade, title
 } from './util.js';
 import {
-  R, applyTerrainTo, buildingFogMode, emptyStats, eventPos, fog, frameIndexFor,
+  R, buildingFogMode, emptyStats, eventPos, fog, frameIndexFor,
   isFootprintVisible, playerColour, queueFrac, seenNow, squadHidden, squadMeta,
   teamColour, visibleBuildings, visibleEffects
 } from './data.js';
@@ -776,7 +776,8 @@ function genericMark(e, frame) {
 
 /** Draw one frame. `head` is `data.playhead()`; `effects` is `activeEffects()`. */
 export function render(head, squads, effects) {
-  applyTerrainTo(head.idx);
+  // `main.js` has already rolled the terrain deltas forward; this only has to
+  // notice that they moved and drop the cached layers.
   if (terrVersion !== R.terrVersion) {
     terrVersion = R.terrVersion;
     delete layers.terrain;

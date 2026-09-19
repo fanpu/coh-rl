@@ -10,8 +10,8 @@
 import { S } from './state.js';
 import { SPEEDS, clamp } from './util.js';
 import {
-  R, activeEffects, buildingFogMode, currentFrame, frameIndexFor, interpolated,
-  lastTick, playhead, prepare, seenNow, setFogFrame
+  R, activeEffects, applyTerrainTo, buildingFogMode, currentFrame, frameIndexFor,
+  interpolated, lastTick, playhead, prepare, seenNow, setFogFrame
 } from './data.js';
 import * as hud from './hud.js';
 import * as view2d from './view2d.js';
@@ -51,24 +51,17 @@ function writeHash() {
   }
 }
 
-function readQuality() {
-  const q = new URLSearchParams(window.location.search).get('quality');
-  return q === 'low' ? 'low' : 'high';
-}
-
 // ------------------------------------------------------------------ views --
 
 /** The renderer module currently in charge. */
 let view = view2d;
 
-export function activeView() { return view; }
-
 function applyView() {
   const threeD = S.view === '3d' && S.webgl && view3d !== null;
   if (!threeD) S.view = '2d';
   cv.hidden = threeD;
-  const gl = $('cv3');
-  if (gl) gl.hidden = !threeD;
+  $('cv3').hidden = !threeD;
+  $('ov').hidden = !threeD;
   $('btn-view').textContent = threeD ? '3D' : '2D';
   $('btn-view').classList.toggle('on', threeD);
   document.body.classList.toggle('view-3d', threeD);
@@ -104,7 +97,6 @@ function fail(message) {
 }
 
 function boot() {
-  S.quality = readQuality();
   fetch('frames.json').then(function (r) {
     if (!r.ok) throw new Error('GET /frames.json -> HTTP ' + r.status + ' ' + r.statusText);
     return r.json();
@@ -163,6 +155,7 @@ function resetCamera() {
 
 function render() {
   const head = playhead();
+  applyTerrainTo(head.idx);
   setFogFrame(head.idx);
   const effects = activeEffects(S.tick);
   const squads = interpolated(head.a, head.b, head.u);
@@ -267,6 +260,9 @@ function install() {
 
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // The active view gets first refusal: the 3D camera owns W/A/S/D/Q/E, and
+    // a global single-letter binding must not shadow them.
+    if (view.key && view.key(e)) { requestRender(); return; }
     const k = e.key;
     if (k === ' ') { setPlaying(!S.playing); e.preventDefault(); }
     else if (k === 'ArrowLeft') step(-1);
@@ -277,15 +273,13 @@ function install() {
     else if (k === 'c' || k === 'C') $('btn-cover').click();
     else if (k === 'g' || k === 'G') $('btn-sectors').click();
     else if (k === 'v' || k === 'V') toggleView();
-    else if (k === 'a' || k === 'A') $('btn-arcs').click();
+    else if (k === 'z' || k === 'Z') $('btn-arcs').click();
     else if (k === 'h' || k === 'H') $('btn-shadows').click();
     else if (k === 'Home') { resetCamera(); requestRender(); }
     else if (k === '?' || k === '/') hud.toggleHelp();
     else if (k === 'Escape') {
       if (!$('help').hidden) hud.toggleHelp();
       else closePanelAndRender();
-    } else if (view.key && view.key(e)) {
-      requestRender();
     }
   });
   document.addEventListener('keyup', function (e) {
@@ -350,12 +344,23 @@ export { resetCamera, setPlaying, requestRender as redrawLater };
 /* Everything the headless browser check needs to drive the app. Small, and
  * documented, but it is API surface that exists for the tests. */
 window.__viewer = {
-  inject: function (payload) { start(payload); },
+  inject: function (payload) { window.__viewerInjected = true; start(payload); },
+  /** Re-fetch and reload the served stream — undoes an `inject`. */
+  reload: function () { window.__viewerInjected = false; boot(); },
   seek: function (fraction) { S.tick = clamp(fraction, 0, 1) * lastTick(); requestRender(); },
   seekTick: function (t) { S.tick = clamp(t, 0, lastTick()); requestRender(); },
   camera: function (x, y, scale) {
     S.cam.x = x; S.cam.y = y; S.cam.scale = scale;
     if (view3d) view3d.lookAt(x, y, scale);
+    requestRender();
+  },
+  /** Place the 3D camera directly: nulls keep the current target. */
+  camera3: function (x, y, dist, yaw, pitch) {
+    if (x !== null && x !== undefined) S.cam3.x = x;
+    if (y !== null && y !== undefined) S.cam3.y = y;
+    if (dist !== null && dist !== undefined) S.cam3.dist = dist;
+    if (yaw !== null && yaw !== undefined) S.cam3.yaw = yaw;
+    if (view3d) view3d.applyCamera(pitch);
     requestRender();
   },
   select: function (kind, id) { S.selection = { kind: kind, id: id }; requestRender(); },
@@ -372,8 +377,12 @@ window.__viewer = {
   redraw: function () { render(); },
   /** What the last render actually drew — the fog assertions read this. */
   stats: function () { return view.lastStats(); },
-  /** Scene-graph counts for the 3D view; null in 2D. */
+  /** Scene-graph counts for the 3D view; null when 3D never loaded. */
   scene3dStats: function () { return view3d ? view3d.sceneStats() : null; },
+  /** The 3D camera's state, for the camera tests. */
+  state3d: function () { return view3d ? view3d.cameraState() : null; },
+  /** Raw pixels out of the WebGL canvas (stays inside the page). */
+  readPixels3d: function (x, y, w, h) { return view3d ? view3d.readPixels(x, y, w, h) : null; },
   setView: function (which) {
     if (which !== S.view) toggleView();
     return S.view;

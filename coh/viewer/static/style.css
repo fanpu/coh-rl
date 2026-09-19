@@ -24,6 +24,14 @@ html, body {
 #cv.dragging, #cv3.dragging { cursor: grabbing; }
 #cv3.picking { cursor: pointer; }
 
+/* Billboards (health bars, badges, names) over the WebGL view: screen-space
+   so they stay crisp at any zoom, and never in the way of a click. */
+#ov {
+  position: fixed; inset: 0;
+  display: block; width: 100vw; height: 100vh;
+  pointer-events: none;
+}
+
 #notice {
   position: fixed;
   left: 50%; top: 14px;

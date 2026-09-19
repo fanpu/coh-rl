@@ -14,6 +14,7 @@
 </head>
 <body>
 <canvas id="cv3" hidden></canvas>
+<canvas id="ov" hidden></canvas>
 <canvas id="cv"></canvas>
 
 <div id="loading">loading frames&hellip;</div>
@@ -50,7 +51,7 @@
     <button id="btn-fog" title="fog of war (F)">Fog: all</button>
     <button id="btn-cover" title="cover overlay (C)">Cover</button>
     <button id="btn-sectors" title="sector borders (G)">Sectors</button>
-    <button id="btn-arcs" title="weapon arcs (A)">Arcs</button>
+    <button id="btn-arcs" title="weapon arcs (Z)">Arcs</button>
     <button id="btn-shadows" title="shadows (H)">Shadows</button>
     <button id="btn-help" title="help (?)">?</button>
   </div>
@@ -68,11 +69,12 @@
       <tr><td>F</td><td>fog: omniscient &rarr; team 0 &rarr; team 1</td></tr>
       <tr><td>C</td><td>cover overlay (green heavy, yellow light)</td></tr>
       <tr><td>G</td><td>territory tint, sector borders and names</td></tr>
-      <tr><td>A</td><td>team-weapon arcs for every weapon (3D)</td></tr>
+      <tr><td>Z</td><td>team-weapon arcs for every weapon (3D)</td></tr>
       <tr><td>H</td><td>shadows on / off (3D)</td></tr>
       <tr><td>Drag</td><td>pan the camera</td></tr>
-      <tr><td>Right-drag / Q, E</td><td>rotate the camera (3D)</td></tr>
+      <tr><td>Right-drag</td><td>rotate the camera (3D)</td></tr>
       <tr><td>W A S D</td><td>pan the camera (3D)</td></tr>
+      <tr><td>Q / E</td><td>rotate the camera (3D)</td></tr>
       <tr><td>Wheel</td><td>zoom toward the cursor</td></tr>
       <tr><td>Click</td><td>inspect a squad or building</td></tr>
       <tr><td>Double-click</td><td>follow a unit (3D)</td></tr>

@@ -9,8 +9,11 @@
 export const S = {
   /** '3d' (the battlefield) or '2d' (the tactical map). */
   view: '3d',
-  /** 'high' or 'low' — `?quality=low` drops shadows and texture resolution. */
-  quality: 'high',
+  /* 'high' or 'low' — `?quality=low` drops shadows and texture resolution.
+   * Read at module load, not at boot: the WebGL renderer is created while the
+   * 3D module is being imported, which is before the frame stream has even
+   * been fetched, and it needs to know the shadow-map budget by then. */
+  quality: new URLSearchParams(window.location.search).get('quality') === 'low' ? 'low' : 'high',
   webgl: true,          // cleared when a WebGL context cannot be created
   dpr: 1,               // device pixel ratio, capped at 2
 

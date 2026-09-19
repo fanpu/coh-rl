@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import http.server
+import os
 import signal
 import socketserver
 import threading
@@ -116,7 +117,21 @@ ACTION_MS = 15_000       # any single Playwright action
 NAV_MS = 20_000          # page load
 TEST_DEADLINE_S = 90.0   # hard ceiling per test
 SETUP_DEADLINE_S = 90.0  # hard ceiling for module-scoped setup
-LAUNCH_ARGS = ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+# Software GL, so the 3D view is exercised against a *real* WebGL2 context
+# rather than skipped. Chrome's SwiftShader is a Vulkan ICD, and ANGLE picks an
+# X11/Vulkan display whenever DISPLAY is set - which then fails with
+# "xcb_connect() failed" and leaves the page with no WebGL at all. Clearing
+# DISPLAY for the browser process is what makes SwANGLE fall back to its
+# headless surfaceless path. (Nine flag combinations were tried; none help
+# while DISPLAY is set, and none are needed once it is not.)
+LAUNCH_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--use-gl=angle",
+    "--use-angle=swiftshader",
+    "--enable-unsafe-swiftshader",
+]
+BROWSER_ENV = {k: v for k, v in os.environ.items() if k != "DISPLAY"}
 
 needs_chromium = pytest.mark.skipif(CHROMIUM is None, reason="no Chromium/Chrome binary on this machine")
 
@@ -128,7 +143,8 @@ def playwright_or_skip():
 
 @pytest.fixture(autouse=True)
 def hard_deadline(request):
-    if "page" not in request.fixturenames and "browser" not in request.fixturenames:
+    wants = {"page", "page3d", "browser"}
+    if not wants & set(request.fixturenames):
         yield
         return
     with deadline(TEST_DEADLINE_S, request.node.name):
@@ -182,7 +198,9 @@ def browser():
         pytest.skip("no Chromium/Chrome binary on this machine")
     with playwright_or_skip()() as pw:
         with deadline(SETUP_DEADLINE_S, "launching Chromium"):
-            instance = pw.chromium.launch(executable_path=CHROMIUM, args=LAUNCH_ARGS)
+            instance = pw.chromium.launch(
+                executable_path=CHROMIUM, args=LAUNCH_ARGS, env=BROWSER_ENV
+            )
         try:
             yield instance
         finally:

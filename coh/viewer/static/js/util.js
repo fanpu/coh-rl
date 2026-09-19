@@ -78,25 +78,25 @@ export function alpha(colour, a) {
 
 export function shade(hex, u) { return mix(hex, u < 0 ? '#000000' : '#ffffff', Math.abs(u)); }
 
-/** 0xrrggbb, for three.js materials. */
-export function colourHex(colour) {
-  const c = parseColour(colour);
-  return (c[0] << 16) | (c[1] << 8) | c[2];
-}
-
-/** Deterministic per-cell noise so terrain texture does not swim while panning. */
+/* Deterministic per-cell noise, so terrain texture does not swim while
+ * panning. `Math.imul` matters here: a plain `*` on two 32-bit integers
+ * overflows a double's 53-bit mantissa and quietly drops the low bits, which
+ * leaves the hash correlated along x+y — as broad diagonal bands across the
+ * whole map once it is used as value noise for the ground. */
 export function hash2(cx, cy) {
-  let h = (cx * 374761393 + cy * 668265263) | 0;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+  let h = (Math.imul(cx, 374761393) + Math.imul(cy, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
 }
 
 /** A second independent stream from the same cell, for varying a second trait. */
 export function hash3(cx, cy, salt) {
-  let h = (cx * 2654435761 + cy * 40503 + salt * 2246822519) | 0;
-  h = (h ^ (h >> 15)) * 2246822519;
-  h = (h ^ (h >> 13)) * 3266489917;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967296;
+  let h = (Math.imul(cx, 2654435761) + Math.imul(cy, 2246822519) + Math.imul(salt, 3266489917)) | 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 3266489917);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
 }
 
 export function offscreen(w, h) {
