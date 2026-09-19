@@ -53,6 +53,7 @@ from coh.sim import orders as orders_mod
 from coh.sim import pathfinding
 from coh.sim.constants import CELL_M, GARRISON_ENTER_RANGE_CELLS
 from coh.sim.state import Building, Event, Squad, SquadState
+from coh.sim.systems import footprints
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -79,11 +80,6 @@ _NO_CELLS: frozenset[tuple[int, int]] = frozenset()
 # ---------------------------------------------------------------------------
 
 
-def _footprint(sim: "Sim", def_id: str) -> tuple[int, int]:
-    bdef = sim.data.buildings.get(def_id) or sim.data.neutral.get(def_id)
-    return bdef.footprint if bdef is not None else (1, 1)
-
-
 def centre_cell(sim: "Sim", building: Building) -> tuple[int, int]:
     """The building's centre cell — the same one `vision` casts sight from.
 
@@ -93,25 +89,6 @@ def centre_cell(sim: "Sim", building: Building) -> tuple[int, int]:
     from coh.sim.systems import vision
 
     return vision.building_center_cell(sim, building.cell, building.def_id)
-
-
-def footprint_cells(sim: "Sim", building: Building) -> frozenset[tuple[int, int]]:
-    """The building's footprint cells (cached per building id on the `Sim`).
-
-    A building never moves or resizes, so the id alone keys this; the entry is
-    dropped when the building is destroyed.
-    """
-    cache = getattr(sim, "_garrison_footprints", None)
-    if cache is None:
-        cache = {}
-        sim._garrison_footprints = cache
-    cells = cache.get(building.id)
-    if cells is None:
-        w, h = _footprint(sim, building.def_id)
-        cx0, cy0 = building.cell
-        cells = frozenset((cx0 + dx, cy0 + dy) for dx in range(w) for dy in range(h))
-        cache[building.id] = cells
-    return cells
 
 
 def occupants(sim: "Sim", building: Building) -> list[Squad]:
@@ -170,18 +147,18 @@ def los_ignore(sim: "Sim", shooter: Squad, target: Squad | Building) -> frozense
     if shooter.garrison_in is not None:
         building = sim.state.buildings.get(shooter.garrison_in)
         if building is not None:
-            cells = footprint_cells(sim, building)
+            cells = footprints.cells(sim, building)
     if isinstance(target, Squad) and target.garrison_in is not None:
         building = sim.state.buildings.get(target.garrison_in)
         if building is not None:
-            cells = cells | footprint_cells(sim, building)
+            cells = cells | footprints.cells(sim, building)
     return cells
 
 
 def _range_to_footprint_cells(sim: "Sim", squad: Squad, building: Building) -> float:
     """Distance in cells from `squad` to the nearest footprint edge."""
     cx0, cy0 = building.cell
-    w, h = _footprint(sim, building.def_id)
+    w, h = footprints.size(sim, building.def_id)
     x, y = squad.pos[0] / CELL_M, squad.pos[1] / CELL_M
     dx = max(cx0 - x, 0.0, x - (cx0 + w))
     dy = max(cy0 - y, 0.0, y - (cy0 + h))
@@ -253,8 +230,10 @@ def leave(sim: "Sim", squad: Squad, *, settle: bool, building: Building | None =
     `settle=True` also puts the squad back into a resting state (`IDLE`, or
     `SETTING_UP` for a team weapon that has to redeploy its gun).
     `Retreat` passes `settle=False`: `movement.start_path` sets `RETREATING`
-    itself right afterwards. `building` is passed by the collapse path, whose
-    building is already gone from `state.buildings`.
+    itself right afterwards, and so does `combat._abandon_weapon`, which uses
+    this to carry a gun whose crew died indoors out to a cell somebody can
+    actually reach. `building` is passed by the collapse path, whose building
+    is already gone from `state.buildings`.
     """
     from coh.sim.systems import movement
 
@@ -278,7 +257,7 @@ def leave(sim: "Sim", squad: Squad, *, settle: bool, building: Building | None =
 
 def exit_cell(sim: "Sim", squad: Squad, building: Building) -> tuple[int, int] | None:
     """Where `squad` steps out of `building` (see the module docstring's rule)."""
-    size = _footprint(sim, building.def_id)
+    size = footprints.size(sim, building.def_id)
     ring = [
         cell
         for cell in pathfinding.adjacent_cells(building.cell, size, sim.map.width, sim.map.height)
@@ -353,7 +332,6 @@ def on_building_destroyed(sim: "Sim", building: Building) -> None:
     building.queue.clear()  # lost with the building, no refund
     territory.clear_op_building(sim, building.id)
     _cancel_garrison_orders(sim, building.id)
-    getattr(sim, "_garrison_footprints", {}).pop(building.id, None)
 
 
 def _eject_all(sim: "Sim", building: Building) -> None:

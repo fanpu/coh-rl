@@ -63,7 +63,7 @@ import numpy as np
 
 from coh.data.schema import WeaponDef
 from coh.maps.cover import cover_at
-from coh.maps.format import cell_of, center_of
+from coh.maps.format import cell_of
 from coh.sim import orders as orders_mod
 from coh.sim.constants import (
     AOE_EDGE_FALLOFF,
@@ -77,7 +77,7 @@ from coh.sim.constants import (
     TICKS_PER_SECOND,
 )
 from coh.sim.state import Building, Event, Squad, SquadState
-from coh.sim.systems import garrison, vehicle_combat, vision
+from coh.sim.systems import footprints, garrison, vehicle_combat, vision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -275,14 +275,6 @@ class _Target:
         return isinstance(self.entity, Squad)
 
 
-def _footprint(sim: "Sim", def_id: str) -> tuple[int, int]:
-    bdef = sim.data.buildings.get(def_id)
-    if bdef is not None:
-        return bdef.footprint
-    ndef = sim.data.neutral.get(def_id)
-    return ndef.footprint if ndef is not None else (1, 1)
-
-
 def _building_target_type(sim: "Sim", building: Building) -> str | None:
     bdef = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
     return None if bdef is None else bdef.target_type
@@ -303,32 +295,10 @@ def _describe(sim: "Sim", from_pos: np.ndarray, entity: Squad | Building) -> _Ta
     target_type = _building_target_type(sim, entity)
     if target_type is None:
         return None
-    cells = _footprint_centres(sim, entity)
+    cells = footprints.centres(sim, entity)
     d2 = ((cells - from_pos) ** 2).sum(axis=1)
     nearest = int(np.argmin(d2))  # ties -> lowest index: deterministic
     return _Target(entity, target_type, cells[nearest], math.sqrt(float(d2[nearest])))
-
-
-def _footprint_centres(sim: "Sim", building: Building) -> np.ndarray:
-    """`(k, 2)` world centres of the building's footprint cells (cached).
-
-    A building never moves or resizes, so this is keyed by id alone and
-    dropped when the building is destroyed.
-    """
-    cache = getattr(sim, "_combat_footprints", None)
-    if cache is None:
-        cache = {}
-        sim._combat_footprints = cache
-    cells = cache.get(building.id)
-    if cells is None:
-        width, height = _footprint(sim, building.def_id)
-        cx0, cy0 = building.cell
-        cells = np.array(
-            [center_of((cx0 + dx, cy0 + dy), CELL_M) for dy in range(height) for dx in range(width)],
-            dtype=float,
-        )
-        cache[building.id] = cells
-    return cells
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +580,7 @@ def _candidates(
         building = sim.state.buildings.get(bid)
         if building is None:
             continue
-        cells = _footprint_centres(sim, building)
+        cells = footprints.centres(sim, building)
         if ((cells - squad.pos) ** 2).sum(axis=1).min() <= reach * reach:
             yield building
 
@@ -975,7 +945,7 @@ def _explode_on_squad(
 
 
 def _explode_on_building(sim: "Sim", weapon: WeaponDef, impact: np.ndarray, building: Building) -> bool:
-    cells = _footprint_centres(sim, building)
+    cells = footprints.centres(sim, building)
     distance = math.sqrt(float(((cells - impact) ** 2).sum(axis=1).min()))
     if distance > weapon.aoe_radius:
         return False
@@ -1183,7 +1153,9 @@ def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
     The `Squad` stays in `state.squads` as a shell so that it can be
     re-crewed. `owner` is left alone -- `abandoned` is what every other
     system reads -- but the shell is no longer visible, targetable, or
-    counted towards its old owner's population and upkeep.
+    counted towards its old owner's population and upkeep. A gun whose crew
+    died inside a garrison is carried out of the building first (task 12),
+    so that somebody can still walk up to it.
     """
     squad.members = []
     squad.abandoned = True
@@ -1198,7 +1170,11 @@ def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
     squad.reinforcing = False
     squad.recrew_target = None
     squad.reface_hold_tick = 0
-    garrison.detach(sim, squad)
+    # A gun crewed inside a building is carried out to an exit cell rather
+    # than left on the (impassable) footprint, where no squad could ever get
+    # within `RECREW_RANGE_M` of it and the gun would be lost for good.
+    # `settle=False`: the shell's own resting state is set above.
+    garrison.leave(sim, squad, settle=False)
     _forget_target(sim, squad.id)
     sim.state.events.append(
         Event(
@@ -1311,10 +1287,12 @@ def _destroy_squad(sim: "Sim", squad: Squad) -> None:
 
 def _destroy_building(sim: "Sim", building: Building) -> None:
     sim.state.buildings.pop(building.id, None)
-    getattr(sim, "_combat_footprints", {}).pop(building.id, None)
-    sim.map.stamp_footprint(building.cell, _footprint(sim, building.def_id), blocked=False)
+    sim.map.stamp_footprint(building.cell, footprints.size(sim, building.def_id), blocked=False)
     _forget_target(sim, building.id)
     on_building_destroyed(sim, building)
+    # After the hook: ejecting the garrison still needs the building's
+    # geometry, and the geometry of a dead building can no longer change.
+    footprints.forget(sim, building.id)
     sim.state.events.append(
         Event(
             kind="building_destroyed",

@@ -71,6 +71,11 @@ def garrison_now(sim, squad, building):
     return squad
 
 
+def cell_at(squad) -> tuple[int, int]:
+    """The cell `squad` is standing in."""
+    return tuple(np.floor(squad.pos / 2.0).astype(int))
+
+
 def run_until(sim, predicate, max_ticks: int = 400) -> bool:
     for _ in range(max_ticks):
         if predicate():
@@ -96,7 +101,7 @@ def test_garrison_order_walks_to_the_building_and_enters():
     assert squad.path == []
     assert not squad.moving
     assert barn.garrison == [squad.id]
-    assert tuple(np.floor(squad.pos / 2.0).astype(int)) == BARN_CENTRE_CELL
+    assert cell_at(squad) == BARN_CENTRE_CELL
 
 
 def test_garrison_on_a_player_building_is_invalid():
@@ -167,7 +172,7 @@ def test_ungarrison_puts_the_squad_on_an_adjacent_passable_cell():
     assert squad.order is None
     assert barn.garrison == []
 
-    cell = tuple(np.floor(squad.pos / 2.0).astype(int))
+    cell = cell_at(squad)
     assert cell in _ring_cells(sim, barn)
     assert sim.map.pass_inf[cell[1], cell[0]]
     # No visible enemy: the cell nearest the owner's HQ (north-west of here).
@@ -181,7 +186,7 @@ def test_ungarrison_exits_away_from_the_nearest_visible_enemy():
     sim.tick()  # let vision see it
 
     assert sim.issue(0, [Ungarrison(squad.id)])[0].ok
-    cell = tuple(np.floor(squad.pos / 2.0).astype(int))
+    cell = cell_at(squad)
     # Away from the west enemy: the east column of the ring.
     assert cell[0] == BARN_CELL[0] + BARN_FOOTPRINT[0]
 
@@ -211,7 +216,7 @@ def test_retreat_from_a_garrison_exits_and_runs_home():
     assert squad.garrison_in is None
     assert barn.garrison == []
     assert squad.state is SquadState.RETREATING
-    cell = tuple(np.floor(squad.pos / 2.0).astype(int))
+    cell = cell_at(squad)
     assert cell in _ring_cells(sim, barn)
 
 
@@ -258,7 +263,7 @@ def test_a_garrisoned_squad_never_walks_toward_an_attack_target():
         sim.tick()
     assert squad.garrison_in == barn.id
     assert squad.path == []
-    assert tuple(np.floor(squad.pos / 2.0).astype(int)) == BARN_CENTRE_CELL
+    assert cell_at(squad) == BARN_CENTRE_CELL
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +409,68 @@ def test_garrisoned_rifles_beat_identical_rifles_in_the_open():
 
 
 # ---------------------------------------------------------------------------
+# a team weapon whose crew dies inside a building
+# ---------------------------------------------------------------------------
+
+
+def _wiped_garrisoned_gun(sim, barn):
+    """An hmg_team garrisoned in `barn` with one hit point per crewman."""
+    gun = garrison_now(sim, spawn(sim, 0, "hmg_team", EAST_CELL), barn)
+    for member in gun.members:
+        member.hp = 1.0
+    return gun
+
+
+def _assert_shell_is_reachable(sim, barn, gun):
+    assert gun.abandoned
+    assert gun.garrison_in is None
+    assert barn.garrison == []
+    assert garrison.occupying_team(sim, barn) is None
+
+    cell = cell_at(gun)
+    # Not left on the footprint, where nobody could ever get within
+    # RECREW_RANGE_M of it.
+    assert cell in _ring_cells(sim, barn)
+    assert sim.map.pass_inf[cell[1], cell[0]]
+    return cell
+
+
+def test_a_gun_wiped_inside_a_building_is_left_outside_and_can_be_recrewed():
+    sim, barn = barn_sim()
+    gun = _wiped_garrisoned_gun(sim, barn)
+    killer = spawn(sim, 1, "garrison_rifles", EAST_CELL)
+    sim.tick()
+    assert sim.issue(1, [Attack(killer.id, gun.id)])[0].ok
+
+    assert run_until(sim, lambda: gun.abandoned, 400)
+    cell = _assert_shell_is_reachable(sim, barn, gun)
+
+    # The house is free again: the enemy may move in.
+    intruder = spawn(sim, 1, "rifles", EAST_CELL)
+    assert sim.issue(1, [Garrison(intruder.id, barn.id)])[0].ok
+
+    # And the gun itself can be picked up.
+    crew = spawn(sim, 1, "rifles", EAST_CELL)
+    assert sim.issue(1, [Move(crew.id, cell)])[0].ok
+    assert run_until(sim, lambda: crew.id not in sim.state.squads, 400)
+    assert not gun.abandoned
+    assert gun.owner == 1
+    assert [e for e in sim.state.events if e.kind == "weapon_recrewed"]
+
+
+def test_a_collapse_that_wipes_a_gun_leaves_the_shell_on_its_exit_cell():
+    sim, barn = barn_sim()
+    gun = _wiped_garrisoned_gun(sim, barn)
+    barn.hp = 1.0
+
+    combat._destroy_building(sim, barn)
+
+    _assert_shell_is_reachable(sim, barn, gun)
+    assert gun.id in sim.state.squads  # a shell, not a corpse
+    assert [e for e in sim.state.events if e.kind == "weapon_abandoned"]
+
+
+# ---------------------------------------------------------------------------
 # building death
 # ---------------------------------------------------------------------------
 
@@ -419,7 +486,7 @@ def test_a_destroyed_building_ejects_its_garrison_with_collapse_damage():
     assert inside.garrison_in is None
     assert inside.state is SquadState.IDLE
     assert [m.hp for m in inside.members] == [max_hp - frac * max_hp] * 4
-    cell = tuple(np.floor(inside.pos / 2.0).astype(int))
+    cell = cell_at(inside)
     assert cell in _ring_cells(sim, barn)
     assert sim.map.pass_inf[cell[1], cell[0]]
     assert [e for e in sim.state.events if e.kind == "garrison_ejected"][0].data["squad"] == inside.id
