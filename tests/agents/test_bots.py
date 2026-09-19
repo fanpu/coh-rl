@@ -9,6 +9,7 @@ see `tests/data/fixtures/economy.yaml`.
 from __future__ import annotations
 
 import ast
+import copy
 import subprocess
 import sys
 from pathlib import Path
@@ -51,8 +52,11 @@ def play_match(match_map, p0: str, p1: str, seed: int = 0) -> dict:
     )
     agents = [AGENTS[p0](), AGENTS[p1]()]
     obs = env.reset()
+    # Each agent gets its own map and tables: nothing an agent does to what it
+    # was handed may reach the sim or its opponent (see `coh.env.run_match`,
+    # which this harness deliberately does not use -- it needs per-step state).
     for player_id, agent in enumerate(agents):
-        agent.reset(player_id, match_map, data)
+        agent.reset(player_id, match_map.copy(), copy.deepcopy(data))
 
     issued = {pid: 0 for pid in env.player_ids}
     invalid = {pid: 0 for pid in env.player_ids}

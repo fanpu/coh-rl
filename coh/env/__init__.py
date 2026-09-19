@@ -10,6 +10,7 @@ The order schema is re-exported here too, so an agent never has to reach into
 """
 
 from coh.env.env import CohEnv
+from coh.env.match import MatchResult, run_match
 from coh.env.observation import (
     BuildingView,
     GhostView,
@@ -49,6 +50,7 @@ __all__ = [
     "CohEnv",
     "Garrison",
     "GhostView",
+    "MatchResult",
     "Move",
     "Observation",
     "ObservationMemory",
@@ -63,6 +65,7 @@ __all__ = [
     "Train",
     "Ungarrison",
     "build_observation",
+    "run_match",
     "order_from_dict",
     "order_to_dict",
 ]

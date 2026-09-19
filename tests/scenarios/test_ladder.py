@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from coh.agents import AGENTS
-from coh.env import CohEnv
+from coh.env import run_match
 from coh.maps.format import load_map
 from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
 from tests.helpers import fixture_data
@@ -44,29 +44,18 @@ def _play(match_map, data, *, t1_slot: int, t1_faction: str, seed: int) -> int |
     factions[1 - t1_slot] = FACTIONS[(FACTIONS.index(t1_faction) + 1) % len(FACTIONS)]
 
     players = [PlayerSetup(faction=factions[slot], team=slot, start_slot=slot) for slot in (0, 1)]
-    env = CohEnv(
-        map_name=MAP_NAME,
-        players=players,
-        seed=seed,
-        config=SimConfig(time_limit_s=TIME_LIMIT_S),
-        data=data,
-        game_map=match_map,
-    )
     agent_names = ["t0", "t0"]
     agent_names[t1_slot] = "t1"
-    agents = [AGENTS[name]() for name in agent_names]
 
-    obs = env.reset()
-    for player_id, agent in enumerate(agents):
-        agent.reset(player_id, match_map, data)
-
-    done = False
-    while not done:
-        orders = {pid: agents[pid].act(obs[pid]) for pid in env.player_ids}
-        obs, _rewards, done, _infos = env.step(orders)
-
-    assert env.sim is not None
-    return env.sim.state.winner
+    return run_match(
+        MAP_NAME,
+        players,
+        [AGENTS[name]() for name in agent_names],
+        data=data,
+        game_map=match_map,
+        seed=seed,
+        config=SimConfig(time_limit_s=TIME_LIMIT_S),
+    ).winner
 
 
 @pytest.mark.slow

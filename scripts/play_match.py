@@ -23,10 +23,9 @@ if __package__ is None and str(Path(__file__).resolve().parents[1]) not in sys.p
 
 from coh.agents import AGENTS  # noqa: E402
 from coh.data.loader import load_game_data  # noqa: E402
-from coh.env import CohEnv  # noqa: E402
+from coh.env import run_match  # noqa: E402
 from coh.maps.format import load_map  # noqa: E402
 from coh.replay.replay import save  # noqa: E402
-from coh.sim.constants import DT  # noqa: E402
 from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints  # noqa: E402
 
 
@@ -45,7 +44,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_match(args: argparse.Namespace) -> dict:
+def play(args: argparse.Namespace) -> dict:
     """Play the match and return a summary dict (also used by the tests)."""
     data = load_game_data(Path(args.data_dir)) if args.data_dir else load_game_data()
     game_map = load_map(args.map, footprints=neutral_footprints(data))
@@ -53,57 +52,38 @@ def run_match(args: argparse.Namespace) -> dict:
         PlayerSetup(faction=args.f0, team=0, start_slot=0),
         PlayerSetup(faction=args.f1, team=1, start_slot=1),
     ]
-    env = CohEnv(
-        map_name=args.map,
-        players=players,
+
+    started = time.perf_counter()
+    result = run_match(
+        args.map,
+        players,
+        [AGENTS[args.p0](), AGENTS[args.p1]()],
+        data=data,
+        game_map=game_map,
         seed=args.seed,
         decision_interval_s=args.decision_interval,
         config=SimConfig(time_limit_s=args.time_limit),
-        data=data,
-        game_map=game_map,
     )
-    agents = [AGENTS[args.p0](), AGENTS[args.p1]()]
-
-    obs = env.reset()
-    for player_id, agent in enumerate(agents):
-        agent.reset(player_id, game_map, data)
-
-    issued = {pid: 0 for pid in env.player_ids}
-    invalid = {pid: 0 for pid in env.player_ids}
-    started = time.perf_counter()
-    done = False
-    while not done:
-        orders = {pid: agents[pid].act(obs[pid]) for pid in env.player_ids}
-        for pid, player_orders in orders.items():
-            issued[pid] += len(player_orders)
-        obs, rewards, done, infos = env.step(orders)
-        for pid, info in infos.items():
-            invalid[pid] += info["invalid_orders"]
     wall_s = time.perf_counter() - started
 
-    assert env.sim is not None
-    summary = {
-        "winner_team": env.sim.state.winner,
-        "tickets": dict(env.sim.state.tickets),
-        "duration_s": env.sim.state.tick * DT,
-        "ticks": env.sim.state.tick,
+    return {
+        "winner_team": result.winner,
+        "tickets": result.tickets,
+        "duration_s": result.duration_s,
+        "ticks": result.ticks,
         "wall_s": wall_s,
-        "ticks_per_s": env.sim.state.tick / wall_s if wall_s > 0 else float("inf"),
-        "rewards": rewards,
-        "orders_issued": issued,
-        "invalid_orders": invalid,
-        "points_held": {
-            team: sum(1 for p in env.sim.state.points.values() if p.owner_team == team)
-            for team in sorted(env.sim.state.tickets)
-        },
-        "env": env,
+        "ticks_per_s": result.ticks / wall_s if wall_s > 0 else float("inf"),
+        "rewards": result.rewards,
+        "orders_issued": result.orders_issued,
+        "invalid_orders": result.invalid_orders,
+        "points_held": result.points_held,
+        "env": result.env,
     }
-    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    summary = run_match(args)
+    summary = play(args)
     env = summary["env"]
 
     winner = summary["winner_team"]

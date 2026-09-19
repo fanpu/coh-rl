@@ -1,17 +1,25 @@
 """`CohEnv` — a PettingZoo-style parallel environment around `Sim`.
 
-One `step` issues every player's orders (players in ascending id order, so
-two players racing for the same manpower resolve deterministically), then
-advances `decision_interval_s` of game time.
+One `step` issues every player's orders, then advances `decision_interval_s`
+of game time. Orders within a step are issued one player at a time — two
+players racing for the last of a shared resource cannot both win — and *who
+goes first rotates by step index*, so the same seat does not take every race
+in a match. The rotation is a pure function of the step count, so it stays
+deterministic.
 
 The env also *is* the replay recorder: every order handed to `Sim.issue` is
-appended to `order_log` as `(tick, player_id, order_dict)` — including the
-invalid ones, so a replay reproduces the invalid-order counts exactly.
+appended to `order_log` as `(tick, player_id, order_dict)` in the order it
+was actually issued — including the invalid ones, so a replay reproduces the
+invalid-order counts exactly.
+
+Rewards are terminal and paid once: the step on which the game ends pays
++1 / -1 / 0, and every later (no-op) step pays 0. An episode's return is
+therefore exactly the match result, however long the caller keeps stepping.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from coh.data.hashing import data_hash
 from coh.data.loader import load_game_data
@@ -20,7 +28,7 @@ from coh.env.observation import Observation, ObservationMemory, build_observatio
 from coh.maps.format import GameMap, load_map
 from coh.maps.hashing import map_hash
 from coh.sim.constants import TICKS_PER_SECOND
-from coh.sim.orders import Order, OrderResult, order_to_dict
+from coh.sim.orders import Order, OrderResult, order_from_dict, order_to_dict
 from coh.sim.sim import PlayerSetup, Sim, SimConfig, neutral_footprints
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -60,6 +68,8 @@ class CohEnv:
         self.sim: Sim | None = None
         self.order_log: list[tuple[int, int, dict]] = []
         self.observation_memory = ObservationMemory()
+        self.step_count = 0
+        self._terminal_reward_paid = False
 
     # -- properties -------------------------------------------------------
 
@@ -93,6 +103,8 @@ class CohEnv:
         )
         self.order_log = []
         self.observation_memory = ObservationMemory()
+        self.step_count = 0
+        self._terminal_reward_paid = False
         return self._observations()
 
     def step(
@@ -100,25 +112,39 @@ class CohEnv:
     ) -> tuple[dict[int, Observation], dict[int, float], bool, dict[int, dict]]:
         """Issue `orders`, advance one decision interval, and report back.
 
-        Rewards are 0 until the game ends, then +1 / -1 / 0 for the winning /
-        losing / drawing side. Once the game is over further steps are no-ops
-        that still return the final observations and `done=True`.
+        Rewards are 0 until the game ends; the step that ends it pays
+        +1 / -1 / 0 for the winning / losing / drawing side, and steps after
+        that are no-ops paying 0 while still returning the final observations
+        and `done=True`.
+
+        An agent's list may contain anything: entries that are not `Order`s
+        (a dict is parsed, anything else is not) are counted as invalid orders
+        and skipped rather than raising.
         """
         if self.sim is None:
             raise RuntimeError("CohEnv.step called before reset()")
 
         infos: dict[int, dict] = {pid: {"invalid_orders": 0, "results": []} for pid in self.player_ids}
         if self.done:
-            return self._observations(), self._rewards(), True, infos
+            return self._observations(), self._zero_rewards(), True, infos
 
         tick = self.sim.state.tick
-        for player_id in sorted(orders):
-            player_orders = orders[player_id]
+        for player_id in self._issue_sequence():
+            player_orders = orders.get(player_id) or []
             if not player_orders:
                 continue
-            results: list[OrderResult] = self.sim.issue(player_id, player_orders)
-            for order in player_orders:
+            parsed = [_as_order(entry) for entry in player_orders]
+            issuable = [order for order in parsed if order is not None]
+            issued = iter(self.sim.issue(player_id, issuable))
+
+            results: list[OrderResult] = []
+            for entry, order in zip(player_orders, parsed):
+                if order is None:
+                    results.append(OrderResult(ok=False, reason=f"not an order: {entry!r}"))
+                    continue
+                results.append(next(issued))
                 self.order_log.append((tick, player_id, order_to_dict(order)))
+
             info = infos.setdefault(player_id, {"invalid_orders": 0, "results": []})
             info["results"] = results
             info["invalid_orders"] = sum(1 for result in results if not result.ok)
@@ -128,7 +154,24 @@ class CohEnv:
                 break
             self.sim.tick()
 
-        return self._observations(), self._rewards(), self.done, infos
+        self.step_count += 1
+        rewards = self._zero_rewards()
+        if self.done and not self._terminal_reward_paid:
+            rewards = self._rewards()
+            self._terminal_reward_paid = True
+        return self._observations(), rewards, self.done, infos
+
+    def _issue_sequence(self) -> list[int]:
+        """Player ids in this step's issue order.
+
+        Starts at `step_count % n_players` and runs cyclically upwards, so no
+        seat is permanently first in line for a contested resource.
+        """
+        ids = self.player_ids
+        if not ids:
+            return ids
+        start = self.step_count % len(ids)
+        return [ids[(start + offset) % len(ids)] for offset in range(len(ids))]
 
     # -- replay -----------------------------------------------------------
 
@@ -165,11 +208,29 @@ class CohEnv:
         assert self.sim is not None
         return {pid: build_observation(self.sim, pid, self.observation_memory) for pid in self.player_ids}
 
+    def _zero_rewards(self) -> dict[int, float]:
+        return {pid: 0.0 for pid in self.player_ids}
+
     def _rewards(self) -> dict[int, float]:
         assert self.sim is not None
         winner = self.sim.state.winner
-        if winner is None:
-            return {pid: 0.0 for pid in self.player_ids}
-        if winner == DRAW:
-            return {pid: 0.0 for pid in self.player_ids}
+        if winner is None or winner == DRAW:
+            return self._zero_rewards()
         return {pid: (1.0 if self.players[pid].team == winner else -1.0) for pid in self.player_ids}
+
+
+def _as_order(entry: Any) -> Order | None:
+    """An agent's list entry as an `Order`, or None if it is not one.
+
+    Agent output is untrusted: a dict is given the benefit of the doubt (it is
+    what `order_to_dict` produces, and what a text/LLM adapter emits), and
+    anything else -- or a dict that will not parse -- is simply not an order.
+    """
+    if isinstance(entry, Order):
+        return entry
+    if isinstance(entry, dict):
+        try:
+            return order_from_dict(entry)
+        except (ValueError, TypeError, KeyError):
+            return None
+    return None

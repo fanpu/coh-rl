@@ -298,10 +298,12 @@ def test_a_draw_pays_nobody():
     assert rewards == {0: 0.0, 1: 0.0}
 
 
-def test_steps_after_the_game_ends_are_no_ops(env):
+def test_steps_after_the_game_ends_are_no_ops_and_pay_nothing(env):
+    """The terminal reward is paid once, so the episode return is the result."""
     env.reset()
     del env.sim.state.buildings[env.sim.state.players[1].hq_id]
-    env.step({})
+    _obs, first_rewards, _done, _infos = env.step({})
+    assert first_rewards == {0: 1.0, 1: -1.0}
     ticks, log_len = env.sim.state.tick, len(env.order_log)
 
     squad = next(s for s in env.sim.state.squads.values() if s.owner == 0)
@@ -310,8 +312,47 @@ def test_steps_after_the_game_ends_are_no_ops(env):
     assert env.sim.state.tick == ticks
     assert len(env.order_log) == log_len
     assert infos[0]["invalid_orders"] == 0
-    assert rewards == {0: 1.0, 1: -1.0}
+    assert rewards == {0: 0.0, 1: 0.0}
     assert set(obs) == {0, 1}
+
+
+def test_the_order_issue_sequence_rotates_across_players(env):
+    """Player 0 does not get first call on a contested resource every step."""
+    env.reset()
+    assert env._issue_sequence() == [0, 1]
+    env.step({})
+    assert env._issue_sequence() == [1, 0]
+    env.step({})
+    assert env._issue_sequence() == [0, 1]
+
+
+def test_orders_are_issued_and_logged_in_the_rotated_sequence(env):
+    env.reset()
+    env.step({})  # step 1: player 1 now goes first
+    squads = {pid: next(s.id for s in env.sim.state.squads.values() if s.owner == pid) for pid in (0, 1)}
+    env.step(
+        {
+            0: [Move(squad=squads[0], cell=(10, 10))],
+            1: [Move(squad=squads[1], cell=(20, 20))],
+        }
+    )
+    assert [player_id for _tick, player_id, _order in env.order_log] == [1, 0]
+
+
+def test_junk_in_an_agents_order_list_counts_as_invalid_and_is_skipped(env):
+    env.reset()
+    squad = next(s for s in env.sim.state.squads.values() if s.owner == 0)
+    good = Move(squad=squad.id, cell=(10, 10))
+    _obs, _r, _d, infos = env.step(
+        {0: ["fire everything", good, {"type": "Stop", "squad": squad.id}, {"type": "Teleport"}, None]}
+    )
+
+    results = infos[0]["results"]
+    assert [r.ok for r in results] == [False, True, True, False, False]
+    assert infos[0]["invalid_orders"] == 3
+    # Only the two real orders reached the sim, so only they were logged.
+    assert [entry[2]["type"] for entry in env.order_log] == ["Move", "Stop"]
+    assert env.sim.state.players[0].invalid_orders == 0
 
 
 # ---------------------------------------------------------------------------
