@@ -140,6 +140,81 @@ squads:
     crushes_light_cover: true
     can_garrison: false
 
+  # Task 11 fixture: a vehicle whose main gun is hull-mounted (no turret).
+  assault_gun:
+    faction: wehr
+    kind: vehicle
+    members: 1
+    member_hp: 400
+    loadout: [hull_gun]
+    target_type: armour_tank
+    cost: {munitions: 60, fuel: 100}
+    population: 10
+    build_time: 60
+    upkeep_per_min: 0
+    speed: 4.0
+    rotation_deg_s: 45
+    sight: 30
+    capture_rate: 0
+    builds: []
+    suppression: null
+    reinforce_cost_mult: 0
+    reinforce_time_mult: 0
+    retreat_received_accuracy: 1.0
+    upgrade_slots: 0
+    crushes_light_cover: true
+    can_garrison: false
+
+  # Task 11 fixtures: the AT-gun-vs-tank duel (see `at_gun_duel` in
+  # weapons.yaml). Both see 50 m so that they can actually fight at the long
+  # range the duel is about.
+  at_team_duel:
+    faction: us
+    kind: team_weapon
+    members: 3
+    member_hp: 60
+    loadout: [at_gun_duel, "", ""]
+    target_type: infantry
+    cost: {manpower: 320, munitions: 40}
+    population: 6
+    build_time: 30
+    upkeep_per_min: 3
+    speed: 2.0
+    rotation_deg_s: 90
+    sight: 50
+    capture_rate: 0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true
+
+  duel_tank:
+    faction: wehr
+    kind: vehicle
+    members: 1
+    member_hp: 400
+    loadout: [duel_tank_gun]
+    target_type: armour_tank
+    cost: {munitions: 60, fuel: 120}
+    population: 10
+    build_time: 60
+    upkeep_per_min: 0
+    speed: 4.0
+    rotation_deg_s: 45
+    sight: 50
+    capture_rate: 0
+    builds: []
+    suppression: null
+    reinforce_cost_mult: 0
+    reinforce_time_mult: 0
+    retreat_received_accuracy: 1.0
+    upgrade_slots: 0
+    crushes_light_cover: true
+    can_garrison: false
+
   # Task 14 fixture: the Wehrmacht construction squad (mirrors `engineers`).
   pioneers:
     faction: wehr

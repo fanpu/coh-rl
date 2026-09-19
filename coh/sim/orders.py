@@ -399,8 +399,17 @@ def apply_capture(sim: "Sim", order: Order) -> None:
 
 
 def validate_garrison(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    """The building must exist and the squad must be able to garrison at all.
+
+    `can_garrison` is false for vehicles (task 11); which *buildings* a squad
+    that can garrison may enter is task 12's job.
+    """
     if order.building_id not in sim.state.buildings:  # type: ignore[attr-defined]
         return OrderResult(False, f"no such building {order.building_id}")  # type: ignore[attr-defined]
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    if not sdef.can_garrison:
+        return OrderResult(False, f"squad {squad.id} ({squad.def_id}) cannot garrison")
     return OK
 
 

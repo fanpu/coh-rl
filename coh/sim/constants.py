@@ -81,3 +81,23 @@ BUILD_RANGE_CELLS = 1.5
 
 # Maximum number of queued train/research items per building.
 MAX_QUEUE_LEN = 5
+
+# --- vehicles (coh/sim/systems/vehicle_combat.py, task 11) -----------------
+
+# A hit counts as a rear hit when the angle between the target vehicle's
+# heading and the direction from the target to the attacker exceeds this.
+# It is the shape of the armour model (front/side vs rear), not a balance
+# number: how much the rear is worth is `TargetMods.rear_penetration`.
+REAR_ARC_DEG = 120.0
+
+# A turret traverses this many times faster than its vehicle's hull rotates
+# (`SquadDef.rotation_deg_s`), and may fire once it is pointing this close to
+# the target.
+TURRET_TRAVERSE_MULT = 2.0
+TURRET_AIM_TOLERANCE_DEG = 5.0
+
+# A destroyed vehicle turns the cell it died in into a crater/wreck (heavy
+# area cover), but only when that cell is still open ground or road: a wreck
+# never replaces a wall, hedge, water or building footprint.
+WRECK_TERRAIN_CHAR = "c"
+WRECK_REPLACES_TERRAIN = (".", "r")

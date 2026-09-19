@@ -103,6 +103,74 @@ weapons:
     scatter_m: 3.0
     aoe_radius: 4.0
 
+  # Task 11 fixture: a hull-mounted vehicle gun — no turret, 60-degree hull
+  # arc, so the vehicle has to turn its whole hull onto a target.
+  hull_gun:
+    damage: 160
+    ranges: [20, 35, 50]
+    min_range: 0
+    accuracy: [0.8, 0.6, 0.4]
+    penetration: [1.0, 1.0, 1.0]
+    suppression: [0.1, 0.1, 0.1]
+    cooldown: [4.0, 5.0]
+    cooldown_range_mult: [1.0, 1.0, 1.0]
+    burst: null
+    rate_of_fire: 1.0
+    reload: [0.0, 0.0]
+    reload_every: 1000
+    arc_deg: 60.0
+    moving_accuracy: 0.5
+    deflection_damage_mult: 0.1
+    target_table:
+      armour_tank: {penetration: 0.5, rear_penetration: 2.0}
+
+  # Task 11 fixtures: the two duellists of `tests/sim/test_vehicles.py`. Their
+  # numbers exist to give the AT-gun-vs-tank duel a clear expected winner in
+  # each starting geometry, and nothing else uses them:
+  #   * `at_gun_duel` kills a 400 HP tank in ~3 penetrating hits (~11 s), but
+  #     its deliberately long `setup_time` makes swinging onto a tank that
+  #     started behind it cost ~32 s;
+  #   * `duel_tank_gun` needs ~7 hits (~26 s) to kill the 3-model crew.
+  # So the gun wins frontally and loses when it has to turn first.
+  at_gun_duel:
+    damage: 160
+    ranges: [20, 35, 50]
+    min_range: 0
+    accuracy: [0.8, 0.8, 0.8]
+    penetration: [1.0, 1.0, 1.0]
+    suppression: [0.1, 0.1, 0.1]
+    cooldown: [3.0, 3.0]
+    cooldown_range_mult: [1.0, 1.0, 1.0]
+    burst: null
+    rate_of_fire: 1.0
+    reload: [0.0, 0.0]
+    reload_every: 1000
+    setup_time: 16.0
+    arc_deg: 60.0
+    moving_accuracy: 0.0
+    deflection_damage_mult: 0.25
+    target_table:
+      armour_tank: {penetration: 1.0, rear_penetration: 2.0}
+
+  duel_tank_gun:
+    damage: 160
+    ranges: [20, 35, 50]
+    min_range: 0
+    accuracy: [0.8, 0.8, 0.8]
+    penetration: [1.0, 1.0, 1.0]
+    suppression: [0.1, 0.1, 0.1]
+    cooldown: [3.0, 3.0]
+    cooldown_range_mult: [1.0, 1.0, 1.0]
+    burst: null
+    rate_of_fire: 1.0
+    reload: [0.0, 0.0]
+    reload_every: 1000
+    moving_accuracy: 0.5
+    deflection_damage_mult: 0.1
+    target_table:
+      infantry: {damage: 0.25}
+      armour_tank: {penetration: 0.5, rear_penetration: 2.0}
+
   # Task 14 fixture: the weapon the `bar` squad upgrade swaps in.
   bar:
     damage: 30

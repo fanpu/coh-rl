@@ -28,7 +28,17 @@ def _dump_yaml(path: Path, doc: dict) -> None:
 
 def test_loads_fixtures():
     data = load_game_data(FIXTURES)
-    assert set(data.weapons) == {"rifle", "bar", "hmg", "tank_gun", "at_gun", "mortar"}
+    assert set(data.weapons) == {
+        "rifle",
+        "bar",
+        "hmg",
+        "tank_gun",
+        "at_gun",
+        "mortar",
+        "hull_gun",
+        "at_gun_duel",
+        "duel_tank_gun",
+    }
     assert set(data.squads) == {
         "rifles",
         "engineers",
@@ -37,6 +47,9 @@ def test_loads_fixtures():
         "mortar_team",
         "tank",
         "pioneers",
+        "assault_gun",
+        "at_team_duel",
+        "duel_tank",
     }
     assert set(data.buildings) == {
         "hq_us",

@@ -1,13 +1,16 @@
-"""combat — target acquisition, shots, damage and deaths (tasks 8 and 10).
+"""combat — target acquisition, shots, damage and deaths (tasks 8, 10 and 11).
 
 One tick of combat is, per squad in ascending id order:
 
 1. `acquire_target` — keep the current target while it is still a legal one,
    otherwise pick the best visible enemy in range with LOS (or follow the
    squad's `Attack` order, walking toward the target until it is in range);
+1b. a vehicle then aims (`vehicle_combat.aim`): turret traverse, or a hull
+   swing for a hull-mounted gun;
 2. `fire_member` — per member, in loadout order, decide whether its weapon
    can fire this tick (ready, in its own range band, not moving with a
-   moving-accuracy of 0, team weapon set up and pointing the right way);
+   moving-accuracy of 0, team weapon set up and pointing the right way,
+   vehicle main gun on target);
 3. `resolve_bullets` — one bullet for a single-shot weapon, `rate_of_fire ×
    burst_duration` for a burst weapon, each rolled separately — or, for an
    indirect weapon, `fire_shell`: one scattered bomb, no hit roll;
@@ -28,14 +31,20 @@ for it (`SetFacing`) or acquisition decided the fight had moved (
 
 Task 9's `add_suppression` spills part of every bullet's suppression to squads
 near the victim (`_spill_suppression`), while `coh/sim/systems/suppression.py`
-owns the slower per-tick decay and `suppressed`/`pinned` thresholds; task 11
-adds penetration to `apply_hit`, task 12 fills in `on_building_destroyed`.
+owns the slower per-tick decay and `suppressed`/`pinned` thresholds; task 12
+fills in `on_building_destroyed`.
+
+Task 11's vehicle rules — the penetration roll behind `apply_hit`'s vehicle
+branch, the turret/hull arc gate in `fire_member`, and the wreck a destroyed
+vehicle leaves in `_destroy_squad` — live in `systems/vehicle_combat.py`.
 
 RNG discipline: every draw comes from `sim.state.rng`, in a fixed order
 (squads ascending id -> members in loadout order -> burst length -> per
-bullet: victim, hit roll -> cooldown -> reload; an indirect firing draws its
-scatter x then y instead). Bullets aimed at a building draw nothing at all:
-they always hit, and so does every explosion.
+bullet: victim, hit roll, penetration if the victim is a vehicle -> cooldown
+-> reload; an indirect firing draws its scatter x then y instead, then one
+penetration per vehicle its blast catches, in ascending squad id). Bullets
+aimed at a building draw nothing at all: they always hit, and so does every
+explosion.
 """
 
 from __future__ import annotations
@@ -62,7 +71,7 @@ from coh.sim.constants import (
     TICKS_PER_SECOND,
 )
 from coh.sim.state import Building, Event, Squad, SquadState
-from coh.sim.systems import vision
+from coh.sim.systems import vehicle_combat, vision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -168,7 +177,22 @@ def run(sim: "Sim") -> None:
             squad.target_id = None
             continue
         acquire_target(sim, squad, snapshot)
+        if vehicle_combat.is_vehicle(sim, squad):
+            # Turret traverse / hull swing happens before firing, so a gun
+            # that comes on target this tick may take its shot this tick.
+            vehicle_combat.aim(sim, squad, _target_aim_pos(sim, squad))
         fire_squad(sim, squad)
+
+
+def _target_aim_pos(sim: "Sim", squad: Squad) -> np.ndarray | None:
+    """Where `squad` is pointing its weapons this tick, if it has a target."""
+    if squad.target_id is None:
+        return None
+    entity = _lookup(sim, squad.target_id)
+    if entity is None:
+        return None
+    target = _describe(sim, squad.pos, entity)
+    return None if target is None else target.aim_pos
 
 
 def _can_fight(sim: "Sim", squad: Squad) -> bool:
@@ -645,6 +669,8 @@ def fire_member(sim: "Sim", squad: Squad, sdef, slot: int, member: "Member", wea
             return
         if not _in_arc(squad, weapon, target.aim_pos):
             return
+    if not vehicle_combat.may_fire(squad, sdef, slot, weapon, target.aim_pos):
+        return  # a vehicle's main gun is still traversing onto the target
     if target.distance > weapon.ranges[2] or target.distance < weapon.min_range:
         return
 
@@ -739,13 +765,13 @@ def _resolve_bullet(
         hit = bool(rng.random() < min(1.0, max(0.0, p_hit)))
         add_suppression(sim, squad, victim_squad, weapon, band, cover_mods.suppression * mods.suppression)
         if hit:
-            apply_hit(sim, squad, weapon, target, victim=victim, cover_damage=cover_mods.damage)
+            apply_hit(sim, squad, weapon, target, victim=victim, cover_damage=cover_mods.damage, band=band)
         return hit
 
     # Buildings are large, static targets: shots at them always land. There
     # is no accuracy roll (and so no RNG draw), no cover, no movement mod and
     # no suppression; only `tt.damage` scales the hit.
-    apply_hit(sim, squad, weapon, target, victim=None, cover_damage=1.0)
+    apply_hit(sim, squad, weapon, target, victim=None, cover_damage=1.0, band=band)
     return True
 
 
@@ -838,7 +864,12 @@ def _explode_on_squad(
 
     hurt = False
     for member, distance, cover in caught:
-        cover_damage = 1.0 if is_vehicle else weapon.cover(cover).damage
+        # A vehicle caught in a blast rolls penetration (against the armour
+        # facing the impact point) instead of taking infantry cover damage.
+        if is_vehicle:
+            cover_damage = vehicle_combat.penetration_mult(sim, weapon, band, victim, impact, mods)
+        else:
+            cover_damage = weapon.cover(cover).damage
         damage = weapon.damage * mods.damage * cover_damage * _falloff(distance, weapon.aoe_radius)
         if damage <= 0.0:
             continue
@@ -977,11 +1008,12 @@ def apply_hit(
     *,
     victim: "Member | None",
     cover_damage: float,
+    band: int,
 ) -> None:
     """Land one bullet on `target`.
 
-    Task 11 extends this with the penetration roll and deflection damage for
-    vehicle targets; for now a vehicle simply takes `damage x tt.damage`.
+    A vehicle victim rolls `vehicle_combat.penetration_mult` for this hit
+    instead of taking infantry cover damage (task 11).
     """
     mods = weapon.vs(target.target_type)
 
@@ -1000,7 +1032,11 @@ def apply_hit(
     # harder to hit) but not `cover.damage`: how much a hit hurts a vehicle is
     # task 11's penetration model, not the infantry cover table.
     is_vehicle = sdef is not None and sdef.kind == "vehicle"
-    damage = weapon.damage * mods.damage * (1.0 if is_vehicle else cover_damage)
+    if is_vehicle:
+        armour = vehicle_combat.penetration_mult(sim, weapon, band, victim_squad, attacker.pos, mods)
+        damage = weapon.damage * mods.damage * armour
+    else:
+        damage = weapon.damage * mods.damage * cover_damage
     victim.hp -= damage
     if victim.hp <= 0.0:
         _remove_member(sim, victim_squad, victim)
@@ -1151,11 +1187,21 @@ def try_recrew(sim: "Sim", squad: Squad) -> bool:
 
 
 def _destroy_squad(sim: "Sim", squad: Squad) -> None:
+    """Take a squad off the field.
+
+    A vehicle leaves a wreck where it died and announces itself as a
+    `vehicle_destroyed` rather than a `squad_destroyed` -- one event per
+    death, never both (task 11).
+    """
+    kind = "squad_destroyed"
+    if vehicle_combat.is_vehicle(sim, squad):
+        vehicle_combat.leave_wreck(sim, squad)
+        kind = vehicle_combat.VEHICLE_DESTROYED
     sim.state.squads.pop(squad.id, None)
     _forget_target(sim, squad.id)
     sim.state.events.append(
         Event(
-            kind="squad_destroyed",
+            kind=kind,
             tick=sim.state.tick,
             data={"id": squad.id, "owner": squad.owner, "def_id": squad.def_id,
                   "pos": [float(squad.pos[0]), float(squad.pos[1])]},

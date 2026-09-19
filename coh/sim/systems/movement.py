@@ -10,7 +10,9 @@ Squad state during a move:
   `TEARING_DOWN` before they start travelling;
 - infantry/team-weapon heading snaps to the travel direction each tick;
 - vehicles rotate toward the travel direction at `rotation_deg_s` and only
-  advance while within `VEHICLE_MOVE_ARC_DEG` of it;
+  advance while within `VEHICLE_MOVE_ARC_DEG` of it (a *stationary* vehicle
+  turning its hull onto a target instead belongs to `vehicle_combat.aim`,
+  which shares `rotate_toward` with this module);
 - a vehicle with `crushes_light_cover` clears a fence (`f`) cell's cover the
   moment it enters it, recording the mutation on `GameState.terrain_changes`;
 - `AttackMove` halts (no advance) while `squad.target_id is not None`
@@ -212,7 +214,7 @@ def _advance(sim: "Sim", squad: "Squad", sdef, mult: float, is_vehicle: bool) ->
         travel_heading = math.atan2(direction[1], direction[0])
 
         if is_vehicle:
-            squad.heading = _rotate_toward(squad.heading, travel_heading, math.radians(sdef.rotation_deg_s) * DT)
+            squad.heading = rotate_toward(squad.heading, travel_heading, math.radians(sdef.rotation_deg_s) * DT)
             if angle_diff(squad.heading, travel_heading) > _VEHICLE_ARC_RAD:
                 break  # still turning onto the arc; no displacement this tick
         else:
@@ -302,7 +304,12 @@ def angle_diff(a: float, b: float) -> float:
     return abs(_wrap(a - b))
 
 
-def _rotate_toward(current: float, target: float, max_delta: float) -> float:
+def rotate_toward(current: float, target: float, max_delta: float) -> float:
+    """`current` turned up to `max_delta` radians toward `target`.
+
+    Public because `systems/vehicle_combat.py` traverses turrets and swings
+    hull-mounted guns with it, and the two must agree on what turning means.
+    """
     diff = _wrap(target - current)
     diff = max(-max_delta, min(max_delta, diff))
     return _wrap(current + diff)
