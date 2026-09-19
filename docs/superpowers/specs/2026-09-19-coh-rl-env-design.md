@@ -124,10 +124,18 @@ All numbers come from `coh/data/`. This section specifies rules only.
 
 ### 3.2 Squads and combat
 
-- Shot resolution: `p_hit = accuracy[range_band] × cover_mod(target) ×
-  moving_mod(attacker) × target_table_mod`. On hit, a random living member takes
-  `damage × target_table_damage_mod × cover_damage_mod`. Weapons have cooldown, burst
-  and reload cycles.
+- The model follows CoH1's own attribute structure so sourced values drop in directly:
+  every entity has a **target type** (e.g. `infantry`, `armour_sherman`); every weapon
+  has a **target table** (per target type: accuracy, moving, damage, penetration,
+  rear-penetration, suppression multipliers and priority) and its **own cover table**
+  (per cover type: accuracy, damage, suppression multipliers). There is no global
+  cover table and no separate armor value.
+- Shot resolution: `p_hit = accuracy[range_band] × cover_table[cover].accuracy ×
+  moving_mod(attacker) × target_table[type].accuracy`. On hit, a random living member
+  takes `damage × target_table[type].damage × cover_table[cover].damage`. Weapons have
+  cooldown, burst and reload cycles.
+- Suppression is added per bullet fired at a squad, hit or miss, and spills to nearby
+  squads through the weapon's nearby-suppression multiplier and radius.
 - Target acquisition: squads auto-engage the highest-priority visible enemy in range
   (per-weapon priority: AT weapons prefer vehicles, etc.) unless given `Attack`.
 - **Cover**: per-cell type none / light / heavy / negative. Directional: a cover cell's
@@ -146,8 +154,9 @@ All numbers come from `coh/data/`. This section specifies rules only.
 - **Team weapons** (HMG, mortar, AT gun): setup and teardown times, firing arc set by
   `SetFacing`; if the crew dies the weapon remains and can be re-crewed by any infantry
   squad. Mortars fire indirectly at visible targets with scatter.
-- **Vehicles**: front and rear armor. `p_pen = clamp(penetration[range_band] /
-  armor[facing_hit])`. Non-penetrating hits deflect (data-defined reduced damage).
+- **Vehicles**: `p_pen = clamp(penetration[range_band] × target_table[type].penetration
+  × (target_table[type].rear_penetration if hit from the rear arc else 1), 0, 1)`.
+  Non-penetrating hits deal the weapon's deflection damage multiplier.
   Vehicles crush light cover objects they drive over. Snipers exist as a unit
   (long range, high single-model kill chance) without camouflage.
 
@@ -284,7 +293,13 @@ Each milestone gets its own implementation plan.
 
 ## 10. Data sourcing
 
-Stat values are imported from community-extracted CoH1 data where available; each value
-records its provenance. Values that cannot be sourced are estimated, marked
-`estimated`, and tuned using the scenario tests in section 8. A survey of available
-sources is recorded in `docs/data-sources.md`.
+Target data version is 2.602. A scraper (`tools/scrape_coh_stats.py`) converts the
+coh-stats.com mirror pages for US and Wehrmacht squads, vehicles, weapons, structures
+and upgrades into the YAML tables; the 2.602 release-note deltas are applied as a
+checked-in patch file; the omgmod JSON dump is used as a cross-check for weapons and to
+fill infantry speeds. Each value records its provenance. Economy and territory
+constants (base manpower income, upkeep formula, capture times, VP ticker rate) are
+poorly documented online: they are set from the best available guide values, marked
+`estimated`, and tuned using the scenario tests in section 8. If a Steam copy of CoH1
+is available, an exact attribute dump can replace all of this without changing the
+table schema. Sources, verified samples and gaps are in `docs/data-sources.md`.
