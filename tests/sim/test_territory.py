@@ -261,6 +261,33 @@ def _chain_sim():
     )
 
 
+def test_hq_sectors_follow_the_player_setups_not_the_maps_start_teams():
+    """Two players on one team, in slots the map labels with *different*
+    teams: both HQ sectors belong to the team, at setup and on every
+    recompute. `recompute_connectivity` used to read `StartDef.team` and
+    silently drop the second HQ sector."""
+    sim = make_sim(
+        players=[
+            PlayerSetup(faction="us", team=0, start_slot=0),
+            PlayerSetup(faction="us", team=0, start_slot=1),
+        ],
+    )
+    # Default map: slot 0 sits in sector 'a', slot 1 in sector 'c'; the map
+    # labels them team 0 and team 1.
+    assert {s.team for s in sim.map.starts} == {0, 1}
+
+    hq_sectors = sim.hq_sectors[0]
+    assert len(hq_sectors) == 2
+    assert sim.state.connected[0] == hq_sectors
+
+    territory.recompute_connectivity(sim)
+    assert sim.state.connected[0] == hq_sectors
+
+    # And both HQ points stay uncapturable rather than only the first.
+    assert territory.is_hq_point(sim, "west")
+    assert territory.is_hq_point(sim, "east")
+
+
 def test_connectivity_recomputes_over_owned_chain():
     sim = _chain_sim()
     a, b, c, d = 0, 1, 2, 3  # sorted(char_to_id) assigns ids in 'a'..'d' order

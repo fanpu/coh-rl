@@ -58,12 +58,13 @@ def run(sim: "Sim") -> None:
 
 
 def hq_point_ids(sim: "Sim") -> set[str]:
-    """Point ids of the sector each `StartDef` names: permanently owned."""
+    """Point ids of every team's HQ sectors (`Sim.hq_sectors`): permanently owned."""
     ids: set[str] = set()
-    for start in sim.map.starts:
-        sector = sim.map.sectors.get(start.sector)
-        if sector is not None and sector.point_id is not None:
-            ids.add(sector.point_id)
+    for sector_ids in sim.hq_sectors.values():
+        for sector_id in sector_ids:
+            sector = sim.map.sectors.get(sector_id)
+            if sector is not None and sector.point_id is not None:
+                ids.add(sector.point_id)
     return ids
 
 
@@ -221,7 +222,7 @@ def recompute_connectivity(sim: "Sim") -> None:
     teams = sorted({player.team for player in sim.state.players.values()})
     connected: dict[int, list[int]] = {}
     for team in teams:
-        hq_sectors = sorted({s.sector for s in sim.map.starts if s.team == team})
+        hq_sectors = sim.hq_sectors.get(team, [])
         seen: set[int] = set(hq_sectors)
         queue: deque[int] = deque(hq_sectors)
         while queue:

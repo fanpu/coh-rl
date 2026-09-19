@@ -89,19 +89,41 @@ class Sim:
         self._path_cache: dict[tuple, list[tuple[int, int]] | None] = {}
         self._path_cache_version: int = -1
 
+        # `team -> sorted sector ids of that team's HQ sectors`; filled in by
+        # `_setup_players` and read by `systems/territory.py`.
+        self.hq_sectors: dict[int, list[int]] = {}
+
         self._setup_players()
         self._place_neutral_buildings()
 
     # -- setup -----------------------------------------------------------
 
-    def _setup_players(self) -> None:
-        starts = {s.slot: s for s in self.map.starts}
-        econ = self.data.economy
+    def _compute_hq_sectors(self) -> dict[int, list[int]]:
+        """`team -> sorted sector ids of that team's HQs`, from the *player
+        setups*.
 
+        A map's `StartDef.team` is only the slot's default: two players may
+        sit on one team in slots the map labels differently. This is the one
+        definition every consumer reads (`_setup_players`'s opening supply,
+        `territory.recompute_connectivity`, `territory.hq_point_ids`), so
+        they can never disagree about who owns which HQ sector.
+        """
+        starts = {s.slot: s for s in self.map.starts}
+        sectors: dict[int, set[int]] = {}
         for player_id, setup in enumerate(self.player_setups):
             start = starts.get(setup.start_slot)
             if start is None:
                 raise SimError(f"player {player_id}: map {self.map.name!r} has no start slot {setup.start_slot}")
+            sectors.setdefault(setup.team, set()).add(start.sector)
+        return {team: sorted(sectors[team]) for team in sorted(sectors)}
+
+    def _setup_players(self) -> None:
+        starts = {s.slot: s for s in self.map.starts}
+        econ = self.data.economy
+        self.hq_sectors = self._compute_hq_sectors()
+
+        for player_id, setup in enumerate(self.player_setups):
+            start = starts[setup.start_slot]  # `_compute_hq_sectors` validated the slot
 
             hq_def = self._hq_def(setup.faction)
             hq = self.spawn_building(player_id, hq_def.id, start.hq_cell)
@@ -125,16 +147,7 @@ class Sim:
         self.state.tickets = {team: float(econ.tickets) for team in teams}
         self.state.visible = {team: np.zeros((self.map.height, self.map.width), dtype=bool) for team in teams}
         self.state.ghosts = {team: {} for team in teams}
-        self.state.connected = {
-            team: sorted(
-                {
-                    starts[setup.start_slot].sector
-                    for setup in self.player_setups
-                    if setup.team == team
-                }
-            )
-            for team in teams
-        }
+        self.state.connected = {team: list(self.hq_sectors.get(team, ())) for team in teams}
 
     def _hq_def(self, faction: str) -> BuildingDef:
         for def_id in sorted(self.data.buildings):
@@ -263,7 +276,15 @@ class Sim:
     # -- orders / tick ----------------------------------------------------
 
     def issue(self, player_id: int, orders: list[Order]) -> list[OrderResult]:
-        """Validate and apply orders now; invalid ones are counted, never raised."""
+        """Validate and apply orders now; invalid ones are counted, never raised.
+
+        Once the game is over every order is refused, but none of them counts
+        against the player: there was nothing left to order, so the refusal is
+        the match's fault rather than the agent's.
+        """
+        if self.state.winner is not None:
+            return [OrderResult(False, "game over") for _ in orders]
+
         results: list[OrderResult] = []
         for order in orders:
             result = orders_mod.validate_order(self, player_id, order)
@@ -277,8 +298,15 @@ class Sim:
         return results
 
     def tick(self) -> None:
-        """Run one simulation tick. A no-op once the game has been won."""
+        """Run one simulation tick. A no-op once the game has been won.
+
+        The last tick's events are still dropped: nothing may keep re-reading
+        the `game_over` event as if it had just happened. (`replay.resimulate`
+        and `CohEnv.step` both stop at the winner, so the frame builder never
+        sees this path.)
+        """
         if self.state.winner is not None:
+            self.state.events.clear()
             return
         self.state.events.clear()
         for system in systems.SYSTEM_ORDER:

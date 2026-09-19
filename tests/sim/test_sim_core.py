@@ -379,6 +379,32 @@ def test_tick_is_a_no_op_once_a_winner_is_set():
     assert sim.state_hash() == before
 
 
+def test_a_finished_game_drops_its_stale_events():
+    sim = make_sim()
+    sim.run(3)
+    sim.state.winner = 0
+    sim.state.events.append(Event(kind="game_over", tick=3, data={"winner": 0}))
+
+    sim.tick()
+
+    assert sim.state.events == []
+
+
+def test_orders_after_the_game_is_over_are_refused_without_being_counted():
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    sim.run(3)
+    sim.state.winner = 1
+    before = sim.state_hash()
+
+    results = sim.issue(0, [Move(squad=squad.id, cell=(12, 12)), Retreat(squad=squad.id)])
+
+    assert [r.ok for r in results] == [False, False]
+    assert all("game over" in r.reason for r in results)
+    assert sim.state.players[0].invalid_orders == 0  # not the agent's fault
+    assert sim.state_hash() == before
+
+
 # --------------------------------------------------------------------------
 # hashing / determinism
 # --------------------------------------------------------------------------

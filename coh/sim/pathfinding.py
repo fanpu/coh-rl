@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from coh.sim.constants import PATH_CACHE_MAX
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
 
@@ -215,7 +217,8 @@ def find_path_cached(sim: "Sim", is_vehicle: bool, start: Cell, goal: Cell) -> l
     The whole cache is dropped whenever `sim.map.version` has moved on since
     it was last touched (any footprint stamp or terrain edit bumps it), so
     entries never need `map.version` in the key and never accumulate stale
-    versions.
+    versions. Within one map version it is capped at `PATH_CACHE_MAX` entries
+    with FIFO eviction — a pure cache, so eviction never changes an answer.
     """
     if sim._path_cache_version != sim.map.version:
         sim._path_cache.clear()
@@ -227,5 +230,7 @@ def find_path_cached(sim: "Sim", is_vehicle: bool, start: Cell, goal: Cell) -> l
         return cache[key]
     passable = sim.map.pass_veh if is_vehicle else sim.map.pass_inf
     result = find_path(passable, start, goal)
+    while len(cache) >= PATH_CACHE_MAX:
+        del cache[next(iter(cache))]  # FIFO eviction
     cache[key] = result
     return result

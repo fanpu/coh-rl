@@ -96,6 +96,10 @@ def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
     counted towards its old owner's population and upkeep. A gun whose crew
     died inside a garrison is carried out of the building first (task 12),
     so that somebody can still walk up to it.
+
+    Upgrades belonged to the crew that just died, not to the gun: they are
+    dropped with them, so an enemy that re-crews the shell inherits a bare
+    weapon rather than the dead squad's kit (and no half-paid purchase).
     """
     squad.members = []
     squad.abandoned = True
@@ -110,6 +114,9 @@ def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
     squad.reinforcing = False
     squad.recrew_target = None
     squad.reface_hold_tick = 0
+    squad.upgrades = []
+    squad.pending_upgrade = None
+    squad.upgrade_done_tick = 0
     # A gun crewed inside a building is carried out to an exit cell rather
     # than left on the (impassable) footprint, where no squad could ever get
     # within `RECREW_RANGE_M` of it and the gun would be lost for good.
