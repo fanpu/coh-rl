@@ -1,16 +1,28 @@
 """vision — per-team visibility grids and building ghosts (task 7).
 
 Each tick, every squad and completed player-owned building casts vision from
-its cell: a set of rays from the origin cell out to the boundary cells of a
-disc of radius `sight / CELL_M` cells (a Bresenham circle), each ray traced
-with a Bresenham line and stopped (after marking) at the first `los_block`
-cell. A team's visible grid is the boolean OR of every friendly unit's mask.
+its cell: a cell `C` within `sight / CELL_M` cells of the origin `O` is
+visible iff no `los_block` cell lies strictly between `O` and `C` on the
+Bresenham line `O -> C` (this is exactly `has_los`'s definition, and the two
+are computed with the same `_bresenham` routine in the same direction so they
+can never disagree; a footprint cell of the source's own building is exempt
+via `ignore_block`, so a unit isn't blind past its own walls). A team's
+visible grid is the boolean OR of every friendly unit's mask.
 
-Masks are pure functions of `(origin_cell, radius_cells, map.version)`, so
-they're cached on the `Sim` instance (`sim._vision_cache`, keyed by
-`(origin_cell, radius_cells)` and invalidated whole-sale whenever the map
-version changes) alongside the per-radius ray table (`sim._vision_rays`).
-Neither cache is a module global: two `Sim`s never share state.
+Per-cell LOS (rather than tracing rays only to the disc's *boundary*, which
+leaves gaps in open terrain once the boundary's angular resolution falls
+behind its circumference) is computed vectorized: per radius, the disc's
+cell offsets and each one's interior-line offsets are precomputed once
+(`sim._vision_disc`); per origin, `los_block` is gathered at every interior
+cell of every disc offset in one shot and AND-reduced to a per-target
+visibility vector.
+
+Masks are pure functions of `(origin_cell, radius_cells, ignore_block,
+map.version)`, so they're cached on the `Sim` instance (`sim._vision_cache`,
+reset whole-sale whenever the map version changes, and capped at
+`VISION_MASK_CACHE_MAX` entries with FIFO eviction — a pure cache, so
+eviction never affects results/determinism). Neither cache is a module
+global: two `Sim`s never share state.
 """
 
 from __future__ import annotations
@@ -20,7 +32,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from coh.maps.format import GameMap, cell_of
-from coh.sim.constants import CELL_M
+from coh.sim.constants import CELL_M, VISION_MASK_CACHE_MAX
 from coh.sim.state import Building, Ghost, Squad
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -57,28 +69,13 @@ def _bresenham(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
     return points
 
 
-def _circle_perimeter(radius: int) -> list[tuple[int, int]]:
-    """Offsets of a Bresenham (midpoint) circle's boundary, 8-way symmetric
-    and gap-free (each consecutive point differs by at most one cell)."""
-    if radius <= 0:
-        return [(0, 0)]
-    points: set[tuple[int, int]] = set()
-    x, y, err = radius, 0, 0
-    while x >= y:
-        for px, py in ((x, y), (y, x), (-y, x), (-x, y), (-x, -y), (-y, -x), (y, -x), (x, -y)):
-            points.add((px, py))
-        y += 1
-        if err <= 0:
-            err += 2 * y + 1
-        else:
-            x -= 1
-            err += 2 * (y - x) + 1
-    return sorted(points)
-
-
 def has_los(m: GameMap, a_pos, b_pos) -> bool:
     """True if no `los_block` cell lies strictly between `a_pos` and `b_pos`
-    (world meters; both endpoints excluded)."""
+    (world meters; both endpoints excluded) on the Bresenham line `a -> b`.
+
+    Uses the same `_bresenham` routine, in the same direction, as the mask
+    computation below, so the two agree by construction.
+    """
     ax, ay = cell_of(np.asarray(a_pos), CELL_M)
     bx, by = cell_of(np.asarray(b_pos), CELL_M)
     line = _bresenham(ax, ay, bx, by)
@@ -89,7 +86,7 @@ def has_los(m: GameMap, a_pos, b_pos) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# caches (owned by the Sim instance, never module-global)
+# per-radius disc precompute (cached on the Sim instance)
 # ---------------------------------------------------------------------------
 
 
@@ -97,27 +94,108 @@ def _radius_cells(sight_m: float) -> int:
     return max(0, round(sight_m / CELL_M))
 
 
-def _rays_for_radius(sim: "Sim", radius_cells: int) -> list[list[tuple[int, int]]]:
-    rays_cache = getattr(sim, "_vision_rays", None)
-    if rays_cache is None:
-        rays_cache = {}
-        sim._vision_rays = rays_cache
-    rays = rays_cache.get(radius_cells)
-    if rays is None:
-        rays = [_bresenham(0, 0, px, py) for px, py in _circle_perimeter(radius_cells)]
-        rays_cache[radius_cells] = rays
-    return rays
+def _disc_offsets(radius: int) -> list[tuple[int, int]]:
+    """Every cell offset `(dx, dy) != (0, 0)` with `dx**2 + dy**2 <= radius**2`
+    (a filled disc, not just its boundary — every disc cell gets its own
+    dedicated LOS check, so there are no angular-resolution gaps)."""
+    r2 = radius * radius
+    return [
+        (dx, dy)
+        for dy in range(-radius, radius + 1)
+        for dx in range(-radius, radius + 1)
+        if (dx, dy) != (0, 0) and dx * dx + dy * dy <= r2
+    ]
+
+
+def _disc_for(sim: "Sim", radius: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """`(offsets[n, 2], interior[n, max_len, 2], valid[n, max_len])`: for each
+    of the `n` disc-offset targets, the offsets of the cells strictly between
+    the origin and that target on the Bresenham line to it, padded to
+    `max_len` with `valid` marking the real (non-padding) entries."""
+    disc_cache = getattr(sim, "_vision_disc", None)
+    if disc_cache is None:
+        disc_cache = {}
+        sim._vision_disc = disc_cache
+    entry = disc_cache.get(radius)
+    if entry is not None:
+        return entry
+
+    offsets = _disc_offsets(radius)
+    lines = [_bresenham(0, 0, dx, dy)[1:-1] for dx, dy in offsets]
+    n = len(offsets)
+    max_len = max((len(line) for line in lines), default=0)
+
+    off_arr = np.array(offsets, dtype=np.int64).reshape(n, 2)
+    interior = np.zeros((n, max_len, 2), dtype=np.int64)
+    valid = np.zeros((n, max_len), dtype=bool)
+    for i, line in enumerate(lines):
+        for j, (x, y) in enumerate(line):
+            interior[i, j] = (x, y)
+            valid[i, j] = True
+
+    entry = (off_arr, interior, valid)
+    disc_cache[radius] = entry
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# per-origin mask cache (owned by the Sim instance, never module-global)
+# ---------------------------------------------------------------------------
 
 
 def _mask_cache(sim: "Sim") -> dict:
-    """The per-`(origin_cell, radius_cells)` mask cache, reset whenever the
-    map's `version` changes (footprint / terrain edits invalidate LOS)."""
+    """The per-`(origin_cell, radius_cells, ignore_block)` mask cache, reset
+    whenever the map's `version` changes (footprint / terrain edits
+    invalidate LOS) and capped at `VISION_MASK_CACHE_MAX` entries (FIFO
+    eviction; a pure cache, so this never affects results)."""
     cache = getattr(sim, "_vision_cache", None)
     if cache is None or getattr(sim, "_vision_cache_version", None) != sim.map.version:
         cache = {}
         sim._vision_cache = cache
         sim._vision_cache_version = sim.map.version
     return cache
+
+
+def _compute_mask(
+    sim: "Sim",
+    origin_cell: tuple[int, int],
+    radius_cells: int,
+    ignore_block: frozenset[tuple[int, int]],
+) -> np.ndarray:
+    width, height = sim.map.width, sim.map.height
+    mask = np.zeros((height, width), dtype=bool)
+    ox, oy = origin_cell
+    if not (0 <= ox < width and 0 <= oy < height):
+        return mask
+    mask[oy, ox] = True
+    if radius_cells <= 0:
+        return mask
+
+    off_arr, interior, valid = _disc_for(sim, radius_cells)
+    if off_arr.shape[0] == 0:
+        return mask
+
+    tx = ox + off_arr[:, 0]
+    ty = oy + off_arr[:, 1]
+    in_bounds = (tx >= 0) & (tx < width) & (ty >= 0) & (ty < height)
+
+    # Interior cells of an in-bounds target are always in-bounds too (they
+    # lie within the O/target bounding box), so clipping here is only to
+    # make the gather safe for out-of-bounds *targets*, whose interior rows
+    # get masked out below via `in_bounds` regardless of the clipped value.
+    ix = ox + interior[:, :, 0]
+    iy = oy + interior[:, :, 1]
+    ix_c = np.clip(ix, 0, width - 1)
+    iy_c = np.clip(iy, 0, height - 1)
+
+    blocked = sim.map.los_block[iy_c, ix_c] & valid
+    if ignore_block:
+        for gx, gy in ignore_block:
+            blocked &= ~((ix == gx) & (iy == gy))
+
+    visible = in_bounds & ~blocked.any(axis=1)
+    mask[ty[visible], tx[visible]] = True
+    return mask
 
 
 def _mask_for(
@@ -127,7 +205,7 @@ def _mask_for(
     ignore_block: frozenset[tuple[int, int]] = frozenset(),
 ) -> np.ndarray:
     """`ignore_block` is the source's own footprint (buildings, and squads
-    garrisoned in one): those cells are marked visible but never stop a ray,
+    garrisoned in one): those cells are marked visible but never block LOS,
     since a unit isn't blind past its own building's walls."""
     cache = _mask_cache(sim)
     key = (origin_cell, radius_cells, ignore_block)
@@ -135,20 +213,9 @@ def _mask_for(
     if mask is not None:
         return mask
 
-    width, height = sim.map.width, sim.map.height
-    los_block = sim.map.los_block
-    mask = np.zeros((height, width), dtype=bool)
-    ox, oy = origin_cell
-    if 0 <= ox < width and 0 <= oy < height:
-        mask[oy, ox] = True
-    for ray in _rays_for_radius(sim, radius_cells):
-        for dx, dy in ray:
-            cx, cy = ox + dx, oy + dy
-            if not (0 <= cx < width and 0 <= cy < height):
-                break
-            mask[cy, cx] = True
-            if los_block[cy, cx] and (cx, cy) not in ignore_block:
-                break
+    mask = _compute_mask(sim, origin_cell, radius_cells, ignore_block)
+    if len(cache) >= VISION_MASK_CACHE_MAX:
+        del cache[next(iter(cache))]  # FIFO eviction
     cache[key] = mask
     return mask
 
@@ -240,7 +307,7 @@ def _update_ghosts(sim: "Sim", grids: dict[int, np.ndarray]) -> None:
 
         for bid in sorted(sim.state.buildings):
             building = sim.state.buildings[bid]
-            if building.owner is None:
+            if building.neutral:
                 continue
             owner = sim.state.players.get(building.owner)
             if owner is None or owner.team == team:

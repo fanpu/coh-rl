@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from coh.maps.format import cell_of, center_of, load_map
+from coh.maps.format import GameMap, cell_of, center_of, load_map
 from coh.sim.constants import CELL_M
 from coh.sim.sim import PlayerSetup
 from coh.sim.state import Ghost, SquadState
@@ -210,6 +210,95 @@ def test_ghost_not_created_for_neutral_building():
     sim.tick()
 
     assert sim.state.ghosts[0] == {}
+
+
+# ---------------------------------------------------------------------------
+# per-cell LOS correctness: no gaps, and agreement with has_los by construction
+# ---------------------------------------------------------------------------
+
+
+class _FakeSim:
+    """The minimum `_compute_mask` / `_disc_for` need: a `.map`, plus normal
+    attribute assignment so the per-radius disc cache can attach itself.
+    Exercises the mask math directly, without a real `Sim`'s HQ/builder
+    squads (which would add their own vision and contaminate an exact
+    disc-shape assertion)."""
+
+    def __init__(self, game_map: GameMap) -> None:
+        self.map = game_map
+
+
+def _open_map(size: int) -> GameMap:
+    """A `size` x `size` map with no LOS blockers anywhere."""
+    los_block = np.zeros((size, size), dtype=bool)
+    passable = np.ones((size, size), dtype=bool)
+    terrain = np.full((size, size), ".", dtype="<U1")
+    return GameMap(
+        name="open",
+        width=size,
+        height=size,
+        pass_inf=passable,
+        pass_veh=passable,
+        los_block=los_block,
+        area_cover=np.zeros((size, size), dtype=np.uint8),
+        cover_object=np.zeros((size, size), dtype=np.uint8),
+        sector_id=np.zeros((size, size), dtype=np.int16),
+        sectors={},
+        points={},
+        neutral_buildings=[],
+        starts=[],
+        terrain=terrain,
+    )
+
+
+_MAP_SIZE = 81
+_ORIGIN = (40, 40)
+
+
+@pytest.mark.parametrize("radius", [4, 12, 18, 30])
+def test_open_terrain_disc_has_no_holes_and_no_overreach(radius):
+    m = _open_map(_MAP_SIZE)
+    sim = _FakeSim(m)
+    mask = vision._compute_mask(sim, _ORIGIN, radius, frozenset())
+
+    ox, oy = _ORIGIN
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            expected = dx * dx + dy * dy <= radius * radius
+            assert bool(mask[oy + dy, ox + dx]) == expected, (dx, dy, radius)
+
+
+def test_mask_agrees_with_has_los_around_scattered_blockers():
+    m = _open_map(_MAP_SIZE)
+    ox, oy = _ORIGIN
+    # a handful of scattered blockers within range, hand-picked (deterministic).
+    blocker_offsets = [(-10, -3), (-6, 7), (0, -9), (4, 4), (8, -2), (-2, 12), (11, 6), (-13, 0)]
+    for bdx, bdy in blocker_offsets:
+        m.los_block[oy + bdy, ox + bdx] = True
+
+    sim = _FakeSim(m)
+    radius = 15
+    mask = vision._compute_mask(sim, _ORIGIN, radius, frozenset())
+    origin_world = center_of(_ORIGIN)
+
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dx * dx + dy * dy > radius * radius:
+                continue
+            cell = (ox + dx, oy + dy)
+            expected = vision.has_los(m, origin_world, center_of(cell))
+            assert bool(mask[cell[1], cell[0]]) == expected, (dx, dy)
+
+
+def test_fresh_radius_18_mask_is_fast_after_precompute():
+    m = _open_map(_MAP_SIZE)
+    sim = _FakeSim(m)
+    vision._compute_mask(sim, (10, 10), 18, frozenset())  # warms the radius-18 disc precompute
+
+    start = time.perf_counter()
+    vision._compute_mask(sim, (60, 60), 18, frozenset())  # a fresh origin: cache miss
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    assert elapsed_ms < 5.0, f"fresh radius-18 mask took {elapsed_ms:.2f}ms"
 
 
 # ---------------------------------------------------------------------------
