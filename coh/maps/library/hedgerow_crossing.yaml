@@ -194,16 +194,39 @@ sectors:
 - IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
 - IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
 - IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+# Point layout. The map is a 180-degree rotationally symmetric 1v1: sector A
+# (NW, slot 0's base) pairs with M (SE, slot 1's base), B with L, C with K,
+# D with J, E with I, F with H, and G is the centre sector. Every point's
+# cell is the EXACT rotational image (x, y) -> (95 - x, 95 - y) of its
+# partner's, and both partners carry the SAME type, so each seat has the
+# identical resource mix at identical path distances:
+#
+# Infantry BFS cells from each side's own HQ footprint, in brackets:
+#
+#   A / M   strategic       base sector, owned from the start (manpower + pop)
+#   B / L   fuel_low    [17] the safe fuel cache next to each base
+#   D / J   munitions_med [52] the flank munitions dump
+#   E / I   fuel_high   [63] the corner fuel depot: the map's fuel prize,
+#                            off each side's own flank
+#   F / H   munitions_high [25] each side's half of the contested middle
+#   C / K   victory     [30] north / south crossing
+#   G       victory     [61] the centre crossroads
+#
+# A single centre point cannot be its own rotational image on an even grid,
+# so `victory_mid` instead sits on a cell whose infantry BFS distance from
+# both HQ footprints is exactly equal (61 cells); its rotational image,
+# (48, 47), is the other equidistant cell of the crossroads. See
+# tests/maps/test_hedgerow_crossing.py, which re-derives all of this.
 points:
-- id: hq_nw
-  name: NW HQ
-  type: hq
+- id: base_nw
+  name: NW Base Strongpoint
+  type: strategic
   cell:
   - 11
   - 17
-- id: strategic_nw
-  name: NW Strongpoint
-  type: strategic
+- id: fuel_low_nw
+  name: NW Fuel Cache
+  type: fuel_low
   cell:
   - 31
   - 17
@@ -213,21 +236,21 @@ points:
   cell:
   - 43
   - 17
-- id: fuel_low_nw
-  name: NW Fuel Cache
-  type: fuel_low
+- id: munitions_med_n
+  name: North Munitions Dump
+  type: munitions_med
   cell:
   - 65
   - 17
-- id: munitions_med_nw
-  name: NW Munitions Dump
-  type: munitions_med
+- id: fuel_high_ne
+  name: NE Fuel Depot
+  type: fuel_high
   cell:
   - 85
   - 17
-- id: fuel_high
-  name: Central Fuel Depot
-  type: fuel_high
+- id: munitions_high_w
+  name: West Munitions Works
+  type: munitions_high
   cell:
   - 15
   - 43
@@ -235,44 +258,44 @@ points:
   name: Farm Crossroads
   type: victory
   cell:
-  - 43
-  - 43
-- id: munitions_high
-  name: Central Munitions Works
+  - 47
+  - 48
+- id: munitions_high_e
+  name: East Munitions Works
   type: munitions_high
   cell:
-  - 79
-  - 43
-- id: munitions_med_se
-  name: SE Munitions Dump
+  - 80
+  - 52
+- id: fuel_high_sw
+  name: SW Fuel Depot
+  type: fuel_high
+  cell:
+  - 10
+  - 78
+- id: munitions_med_s
+  name: South Munitions Dump
   type: munitions_med
   cell:
-  - 9
-  - 77
-- id: fuel_low_se
-  name: SE Fuel Cache
-  type: fuel_low
-  cell:
-  - 29
-  - 77
+  - 30
+  - 78
 - id: victory_south
   name: South Crossing
   type: victory
   cell:
-  - 43
-  - 77
-- id: strategic_se
-  name: SE Strongpoint
+  - 52
+  - 78
+- id: fuel_low_se
+  name: SE Fuel Cache
+  type: fuel_low
+  cell:
+  - 64
+  - 78
+- id: base_se
+  name: SE Base Strongpoint
   type: strategic
   cell:
-  - 63
-  - 77
-- id: hq_se
-  name: SE HQ
-  type: hq
-  cell:
-  - 83
-  - 77
+  - 84
+  - 78
 neutral_buildings:
 - def: barn
   cell:
@@ -290,6 +313,10 @@ neutral_buildings:
   cell:
   - 40
   - 54
+# `hq_cell` is the top-left corner of the HQ footprint (how the sim anchors
+# it today, see `Sim.spawn_building` -> `GameMap.stamp_footprint`). With the
+# 4x4 HQ of the stat tables the two footprints cover x11-14/y17-20 and
+# x81-84/y75-78, which are exact rotational images of each other.
 starts:
 - slot: 0
   team: 0
@@ -300,6 +327,6 @@ starts:
 - slot: 1
   team: 1
   hq_cell:
-  - 83
-  - 77
+  - 81
+  - 75
   sector: M
