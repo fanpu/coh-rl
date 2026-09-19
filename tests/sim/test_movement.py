@@ -489,6 +489,46 @@ def test_move_order_to_the_squads_own_cell_arrives_immediately():
     assert squad.state is SquadState.IDLE
 
 
+def test_move_to_an_unreachable_cell_settles_a_moving_squad_to_idle():
+    # Regression: start_path's "goal is truly unreachable" branch used to
+    # leave squad.state/order untouched. A squad already MOVING toward one
+    # goal that gets re-ordered to an enclosed (unreachable) cell would stay
+    # MOVING forever with an empty path and a standing order that never
+    # clears, and the "if not squad.path: return" guard would then skip it
+    # every tick.
+    width, height = 24, 12
+    rows = ["." * width for _ in range(height)]
+    # wall ring sealing (10, 9) off from the rest of the map (the cell
+    # itself stays open ground, matching find_path's "enclosed goal" case).
+    for cx, cy in [(9, 8), (10, 8), (11, 8), (9, 9), (11, 9), (9, 10), (10, 10), (11, 10)]:
+        row = rows[cy]
+        rows[cy] = row[:cx] + "w" + row[cx + 1 :]
+    starts = [
+        {"slot": 0, "team": 0, "hq_cell": [1, 1], "sector": "a"},
+        {"slot": 1, "team": 1, "hq_cell": [19, 1], "sector": "a"},
+    ]
+    sim = make_sim(ascii_map=rows, starts=starts)
+    squad = spawn(sim, 0, "rifles", (2, 6))
+
+    sim.issue(0, [Move(squad=squad.id, cell=(20, 6))])
+    sim.run(5)
+    assert squad.state is SquadState.MOVING
+    assert squad.path
+
+    (result,) = sim.issue(0, [Move(squad=squad.id, cell=(10, 9))])  # enclosed, unreachable
+    assert result.ok  # accepted (in bounds); pathing just fails to find a route
+    assert squad.path == []
+    assert squad.state is SquadState.IDLE
+    assert squad.order is None
+    assert squad.moving is False
+
+    pos_after_stop = squad.pos.copy()
+    sim.run(20)
+    assert squad.state is SquadState.IDLE
+    assert squad.path == []
+    assert np.allclose(squad.pos, pos_after_stop), "squad moved after settling to idle"
+
+
 # --------------------------------------------------------------------------
 # determinism
 # --------------------------------------------------------------------------

@@ -27,7 +27,11 @@ Squad state during a move:
   rule as arrival, without actually treating it as one, while a re-plan
   that resolves to the squad's own current cell (its one remaining
   waypoint was the final goal and just got blocked) *is* treated as a real
-  arrival, via `_on_arrival`.
+  arrival, via `_on_arrival`;
+- an order that resolves to no path at all (the goal is truly unreachable,
+  e.g. enclosed) also settles through `_on_arrival` at order-issue time, so
+  a squad that was mid-move when it got re-ordered to somewhere
+  unreachable doesn't stay stuck in its old state with an empty path.
 
 `Sim.spawn_squad` also uses `setup_ticks` below: a freshly spawned team
 weapon starts `SETTING_UP` (it's always deployed, never mid-march) rather
@@ -82,9 +86,16 @@ def start_path(sim: "Sim", squad: "Squad", order: orders_mod.Order, goal_cell: t
     path = pathfinding.find_path_cached(sim, is_vehicle, start_cell, goal_cell)
     squad.order = order
     if path is None:
-        # Nothing reachable right now: the order stands, but there's nothing
-        # to walk toward yet (e.g. a later map change might open one up).
+        # Truly unreachable: there's nowhere to walk toward at all, so this
+        # settles exactly like an arrival would (order cleared for
+        # Move/AttackMove/Retreat, kept for Capture/Garrison/Build; a team
+        # weapon settles back to SETTING_UP -> SET_UP rather than sitting in
+        # a stale MOVING/TEARING_DOWN with no path). Leaving state/order
+        # untouched here previously stranded an already-MOVING squad that
+        # got re-ordered to an unreachable goal.
         squad.path = []
+        squad.moving = False
+        _on_arrival(sim, squad, sdef)
         return
 
     squad.path = list(path[1:])  # drop the start cell; keep remaining waypoints
