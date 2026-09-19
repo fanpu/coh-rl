@@ -440,6 +440,55 @@ def test_squad_replans_around_a_footprint_stamped_mid_transit():
     assert abs(cx - 30) <= 1 and cy == 10
 
 
+def test_squad_arrives_when_final_goal_blocked_and_replan_resolves_to_own_cell():
+    # Regression: a re-plan that *succeeds* but resolves back to the
+    # squad's own current cell (its one remaining waypoint was the final
+    # goal, and it just got blocked, so find_path's nearest-passable
+    # fallback lands on the cell the squad is already standing on) used to
+    # leave squad.path empty without ever calling _on_arrival, stranding
+    # the squad in MOVING forever (the "if not squad.path: return" guard at
+    # the top of the tick step would then skip it every tick).
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    goal = (11, 10)
+    (result,) = sim.issue(0, [Move(squad=squad.id, cell=goal)])
+    assert result.ok
+    assert squad.path == [goal]
+    assert squad.state is SquadState.MOVING
+
+    # Block the final goal and its whole ring except the squad's own cell,
+    # so find_path's nearest-passable fallback for the (now impassable)
+    # goal has nowhere to land but the squad's own cell.
+    ring = {(gx, gy) for gx in range(10, 13) for gy in range(9, 12)}
+    for cx, cy in ring - {(10, 10)}:
+        sim.map.stamp_footprint((cx, cy), (1, 1), blocked=True)
+
+    arrived = False
+    for _ in range(10):
+        sim.tick()
+        if squad.state is SquadState.IDLE:
+            arrived = True
+            break
+
+    assert arrived, "squad never arrived; it's stranded"
+    assert squad.order is None
+    assert squad.path == []
+
+
+def test_move_order_to_the_squads_own_cell_arrives_immediately():
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    (result,) = sim.issue(0, [Move(squad=squad.id, cell=(10, 10))])
+    assert result.ok
+    assert squad.path == []
+    assert squad.state is SquadState.IDLE
+    assert squad.order is None
+
+    # no crash running further ticks with an already-idle, already-arrived squad
+    sim.run(5)
+    assert squad.state is SquadState.IDLE
+
+
 # --------------------------------------------------------------------------
 # determinism
 # --------------------------------------------------------------------------
