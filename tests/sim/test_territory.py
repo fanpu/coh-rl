@@ -41,7 +41,7 @@ def test_capture_takes_capture_time_over_rate():
     assert sim.state.squads[squad.id].order is None
 
 
-def test_contested_point_stalls():
+def test_contested_point_stalls(no_combat):
     sim = make_sim()
     s0 = spawn(sim, 0, "rifles", (20, 15))
     s1 = spawn(sim, 1, "rifles", (20, 15))
@@ -187,7 +187,7 @@ def test_already_owned_full_progress_capture_rejected():
 # ---------------------------------------------------------------------------
 
 
-def test_op_prevents_neutralize_until_destroyed():
+def test_op_prevents_neutralize_until_destroyed(no_combat):
     sim = make_sim()
     sim.state.points["mid"] = PointState(owner_team=0, progress=1.0)
     building = sim.spawn_building(0, "op_us", (20, 15))
@@ -262,7 +262,7 @@ def test_connectivity_recomputes_over_owned_chain():
     assert sim.state.connected[0] == [a, b, c]
 
 
-def test_cutting_middle_sector_strands_far_sector_and_restores():
+def test_cutting_middle_sector_strands_far_sector_and_restores(no_combat):
     sim = _chain_sim()
     a, b, c, _d = 0, 1, 2, 3
 

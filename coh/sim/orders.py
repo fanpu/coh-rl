@@ -279,11 +279,20 @@ def validate_attack(sim: "Sim", player: "Player", order: Order) -> OrderResult:
 
 
 def apply_attack(sim: "Sim", order: Order) -> None:
-    """Store the order; combat picks the target up on its next tick."""
+    """Store the order; combat picks the target up on its next tick.
+
+    Validation just proved the target visible, so that is the baseline for
+    combat's "gave up: unseen too long" timer; `-1` for the re-path timer
+    lets the squad path toward the target immediately. Any current movement
+    is cancelled here; combat settles the squad's state (and redeploys a
+    team weapon) once it knows whether the target is already in range.
+    """
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     squad.order = order
     squad.target_id = None
     squad.path = []
+    squad.attack_last_seen_tick = sim.state.tick
+    squad.attack_last_repath_tick = -1
 
 
 def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:

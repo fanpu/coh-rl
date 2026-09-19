@@ -202,13 +202,9 @@ def test_suppressed_squad_moves_at_suppressed_speed_mult():
     assert abs(traveled - expected) < 0.05
 
 
-def test_attack_move_halts_while_target_set_and_resumes(monkeypatch):
-    from coh.sim.systems import combat
-
+def test_attack_move_halts_while_target_set_and_resumes(no_combat):
     # This test drives `target_id` by hand to isolate movement's halt rule;
-    # stub the combat system out so it doesn't overwrite it (task 8).
-    monkeypatch.setattr(combat, "run", lambda sim: None)
-
+    # the `no_combat` fixture stops combat overwriting it (task 8).
     sim = make_sim()
     squad = spawn(sim, 0, "rifles", (10, 10))
     sim.issue(0, [AttackMove(squad=squad.id, cell=(25, 10))])

@@ -22,7 +22,8 @@ weapons, task 11 adds penetration to `apply_hit`, task 12 fills in
 
 RNG discipline: every draw comes from `sim.state.rng`, in a fixed order
 (squads ascending id -> members in loadout order -> burst length -> per
-bullet: victim, hit roll -> cooldown -> reload).
+bullet: victim, hit roll -> cooldown -> reload). Bullets aimed at a
+building draw nothing at all: they always hit.
 """
 
 from __future__ import annotations
@@ -144,7 +145,6 @@ def run(sim: "Sim") -> None:
             continue
         acquire_target(sim, squad, snapshot)
         fire_squad(sim, squad)
-    _forget_dead_attack_tracking(sim)
 
 
 def _can_fight(sim: "Sim", squad: Squad) -> bool:
@@ -371,44 +371,6 @@ def _candidates(
 # -- Attack order -----------------------------------------------------------
 
 
-@dataclass
-class _Pursuit:
-    """Per-squad `Attack`-order bookkeeping, owned by the `Sim` instance.
-
-    Kept off `GameState` deliberately: it is derived scheduling state (when
-    the target was last seen, when we last re-planned) that no other system
-    reads. It is a pure function of the tick sequence, so it does not affect
-    determinism.
-    """
-
-    order_target: int
-    last_seen_tick: int
-    last_repath_tick: int
-
-
-def _pursuits(sim: "Sim") -> dict[int, _Pursuit]:
-    tracking = getattr(sim, "_combat_pursuits", None)
-    if tracking is None:
-        tracking = {}
-        sim._combat_pursuits = tracking
-    return tracking
-
-
-def _forget_dead_attack_tracking(sim: "Sim") -> None:
-    tracking = _pursuits(sim)
-    for sid in [sid for sid in tracking if sid not in sim.state.squads]:
-        del tracking[sid]
-
-
-def _pursuit_for(sim: "Sim", squad: Squad, order: orders_mod.Attack) -> _Pursuit:
-    tracking = _pursuits(sim)
-    entry = tracking.get(squad.id)
-    if entry is None or entry.order_target != order.target_id:
-        entry = _Pursuit(order.target_id, sim.state.tick, -_REPATH_TICKS)
-        tracking[squad.id] = entry
-    return entry
-
-
 def _halt(sim: "Sim", squad: Squad) -> None:
     """Stop walking, the way movement's arrival does.
 
@@ -432,43 +394,52 @@ def _halt(sim: "Sim", squad: Squad) -> None:
 def _clear_attack_order(sim: "Sim", squad: Squad) -> None:
     squad.order = None
     squad.target_id = None
-    _pursuits(sim).pop(squad.id, None)
+    squad.attack_last_seen_tick = -1
+    squad.attack_last_repath_tick = -1
     _halt(sim, squad)
 
 
 def _pursue_attack_order(
     sim: "Sim", squad: Squad, order: orders_mod.Attack, team: int, reach: float
 ) -> None:
+    """Chase the `Attack` order's target: give up on it, stop in range, or walk.
+
+    Pursuit memory lives on the squad (`attack_last_seen_tick` /
+    `attack_last_repath_tick`), so it is part of `GameState` and the state
+    hash. `orders.apply_attack` seeds them; a value of -1 means "no baseline
+    yet", which this tick then becomes.
+    """
     entity = _lookup(sim, order.target_id)
     if entity is None:
         _clear_attack_order(sim, squad)
         return
 
-    pursuit = _pursuit_for(sim, squad, order)
-    if vision.is_visible(sim, team, entity):
-        pursuit.last_seen_tick = sim.state.tick
-    elif sim.state.tick - pursuit.last_seen_tick > _LOST_TARGET_TICKS:
+    if vision.is_visible(sim, team, entity) or squad.attack_last_seen_tick < 0:
+        squad.attack_last_seen_tick = sim.state.tick
+    elif sim.state.tick - squad.attack_last_seen_tick > _LOST_TARGET_TICKS:
         _clear_attack_order(sim, squad)
         return
 
     target = _describe(sim, squad.pos, entity)
     if target is not None and _is_engageable(sim, squad, team, target, reach):
         squad.target_id = target.id
-        if squad.path:
-            _halt(sim, squad)
+        # Unconditionally: a squad that was MOVING when the order arrived has
+        # no path left to clear but still has to settle out of MOVING (and a
+        # team weapon has to redeploy) before it can fire. `_halt` is a no-op
+        # for a squad that is already stopped, so a SET_UP team weapon given
+        # an in-range Attack never needlessly tears down.
+        _halt(sim, squad)
         return
 
     squad.target_id = None
-    _repath_toward(sim, squad, order, entity, pursuit)
+    _repath_toward(sim, squad, order, entity)
 
 
-def _repath_toward(
-    sim: "Sim", squad: Squad, order: orders_mod.Attack, entity: Squad | Building, pursuit: _Pursuit
-) -> None:
+def _repath_toward(sim: "Sim", squad: Squad, order: orders_mod.Attack, entity: Squad | Building) -> None:
     """Walk toward the target, re-planning at most once per `ATTACK_ORDER_REPATH_S`."""
-    if sim.state.tick - pursuit.last_repath_tick < _REPATH_TICKS:
+    if squad.attack_last_repath_tick >= 0 and sim.state.tick - squad.attack_last_repath_tick < _REPATH_TICKS:
         return
-    pursuit.last_repath_tick = sim.state.tick
+    squad.attack_last_repath_tick = sim.state.tick
 
     from coh.sim.systems import movement
 
@@ -600,12 +571,11 @@ def _resolve_bullet(
             apply_hit(sim, squad, weapon, target, victim=victim, cover_damage=cover_mods.damage)
         return hit
 
-    # Buildings: no cover, no movement, no suppression.
-    p_hit = weapon.accuracy[band] * mods.accuracy
-    hit = bool(rng.random() < min(1.0, max(0.0, p_hit)))
-    if hit:
-        apply_hit(sim, squad, weapon, target, victim=None, cover_damage=1.0)
-    return hit
+    # Buildings are large, static targets: shots at them always land. There
+    # is no accuracy roll (and so no RNG draw), no cover, no movement mod and
+    # no suppression; only `tt.damage` scales the hit.
+    apply_hit(sim, squad, weapon, target, victim=None, cover_damage=1.0)
+    return True
 
 
 def _attacker_accuracy_mult(sim: "Sim", squad: Squad) -> float:
@@ -649,6 +619,10 @@ def _member_cell(sim: "Sim", squad: Squad, slot: int) -> tuple[int, int]:
 def add_suppression(
     sim: "Sim", attacker: Squad, victim: Squad, weapon: WeaponDef, band: int, mult: float
 ) -> None:
+    # `last_hit_tick` / `last_attacker_pos` mean "under fire", so they are set
+    # per bullet whether or not it hit, and even for suppression-immune
+    # squads: task 9's out-of-combat recovery timer and task 11's armour
+    # facing both need them regardless of the suppression meter.
     victim.last_hit_tick = sim.state.tick
     victim.last_attacker_pos = (float(attacker.pos[0]), float(attacker.pos[1]))
     sdef = sim.data.squads.get(victim.def_id)
@@ -687,6 +661,9 @@ def apply_hit(
     if victim is None:  # pragma: no cover - callers always pass a member
         return
     sdef = sim.data.squads.get(victim_squad.def_id)
+    # A vehicle victim still gets `cover.accuracy` in `p_hit` (cover makes it
+    # harder to hit) but not `cover.damage`: how much a hit hurts a vehicle is
+    # task 11's penetration model, not the infantry cover table.
     is_vehicle = sdef is not None and sdef.kind == "vehicle"
     damage = weapon.damage * mods.damage * (1.0 if is_vehicle else cover_damage)
     victim.hp -= damage
@@ -706,7 +683,6 @@ def _remove_member(sim: "Sim", squad: Squad, member: "Member") -> None:
 
 def _destroy_squad(sim: "Sim", squad: Squad) -> None:
     sim.state.squads.pop(squad.id, None)
-    _pursuits(sim).pop(squad.id, None)
     _forget_target(sim, squad.id)
     sim.state.events.append(
         Event(

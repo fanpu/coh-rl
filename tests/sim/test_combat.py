@@ -11,7 +11,7 @@ import pytest
 from coh.data.schema import GameData, TargetMods
 from coh.maps.format import center_of
 from coh.sim.constants import TICKS_PER_SECOND
-from coh.sim.orders import Attack
+from coh.sim.orders import Attack, Move
 from coh.sim.state import SquadState
 from coh.sim.systems import combat, vision
 from tests.helpers import fixture_data, make_sim, spawn
@@ -392,6 +392,74 @@ def test_below_min_range_no_shot():
     assert damage_taken(target) == 0.0
 
 
+def _next_ready_after_one_firing(sim, shooter) -> int:
+    fired_at = sim.state.tick
+    fire_rounds(sim, shooter, 1)
+    return shooter.members[0].next_ready_tick - fired_at
+
+
+def test_suppressed_attacker_loses_accuracy_and_gains_cooldown():
+    econ = fixture_data().economy
+    trials = 400
+    expected = trials * econ.suppressed_accuracy_mult
+    sigma = math.sqrt(trials * econ.suppressed_accuracy_mult * (1 - econ.suppressed_accuracy_mult))
+    for seed in (0, 1, 2):
+        sim = combat_sim(seed=seed)
+        shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+        target = dummy(sim, TARGET_CELL)
+        shooter.suppressed = True  # task 9 sets this; we set it by hand
+        fire_rounds(sim, shooter, trials)
+        hits = damage_taken(target) / sim.data.weapons["rifle"].damage
+        assert abs(hits - expected) <= 4 * sigma, (seed, hits)
+
+    # cooldown: a fixed 2 s cooldown becomes 2 s x suppressed_cooldown_mult
+    sim = combat_sim(data=with_weapon("rifle", cooldown=(2.0, 2.0)))
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    dummy(sim, TARGET_CELL)
+    assert _next_ready_after_one_firing(sim, shooter) == math.ceil(2.0 * TICKS_PER_SECOND)
+
+    shooter.suppressed = True
+    delay = _next_ready_after_one_firing(sim, shooter)
+    assert delay == math.ceil(2.0 * econ.suppressed_cooldown_mult * TICKS_PER_SECOND)
+
+
+def test_reload_delay_is_added_on_every_nth_firing():
+    sim = combat_sim(data=with_weapon("rifle", cooldown=(1.0, 1.0), reload=(4.0, 4.0), reload_every=3))
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    dummy(sim, TARGET_CELL)
+
+    plain = math.ceil(1.0 * TICKS_PER_SECOND)
+    reloading = math.ceil((1.0 + 4.0) * TICKS_PER_SECOND)
+    delays = [_next_ready_after_one_firing(sim, shooter) for _ in range(6)]
+
+    assert delays == [plain, plain, reloading, plain, plain, reloading]
+    assert shooter.members[0].shots_since_reload == 0
+
+
+def test_cooldown_range_mult_is_applied_per_band():
+    data = with_weapon("rifle", cooldown=(1.0, 1.0), cooldown_range_mult=(1.0, 2.0, 3.0))
+    plain = 1.0 * TICKS_PER_SECOND
+
+    # band 0: 10 m
+    sim = combat_sim(data=data)
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    dummy(sim, TARGET_CELL)
+    assert _next_ready_after_one_firing(sim, shooter) == math.ceil(plain * 1.0)
+
+    # band 1: 16 m (short 10 < d <= medium 20)
+    sim = combat_sim(data=data)
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    dummy(sim, (SHOOTER_CELL[0] + 8, SHOOTER_CELL[1]))
+    assert _next_ready_after_one_firing(sim, shooter) == math.ceil(plain * 2.0)
+
+    # band 2: 26 m (medium 20 < d <= long 30); a spotter supplies the vision
+    sim = combat_sim(data=data)
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    dummy(sim, (SHOOTER_CELL[0] + 13, SHOOTER_CELL[1]))
+    spawn(sim, 0, "engineers", (SHOOTER_CELL[0] + 11, SHOOTER_CELL[1]))
+    assert _next_ready_after_one_firing(sim, shooter) == math.ceil(plain * 3.0)
+
+
 # ---------------------------------------------------------------------------
 # suppression accumulation (task 9 consumes it)
 # ---------------------------------------------------------------------------
@@ -540,7 +608,7 @@ def test_retreating_target_takes_the_retreat_accuracy_penalty():
 
 
 def test_enemy_building_is_damaged_and_destroyed():
-    sim = combat_sim(data=with_weapon("rifle", accuracy=(1.0, 1.0, 1.0)))
+    sim = combat_sim()
     shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
     building = sim.spawn_building(1, "barracks", (29, 9))
     building.hp = 3 * sim.data.weapons["rifle"].damage
@@ -559,6 +627,24 @@ def test_enemy_building_is_damaged_and_destroyed():
     for dx in range(footprint[0]):
         for dy in range(footprint[1]):
             assert sim.map.pass_inf[9 + dy, 29 + dx]
+
+
+def test_every_shot_at_a_building_lands():
+    """Buildings are large static targets: no accuracy roll at all."""
+    # the rifle's long-band accuracy is 0.25, yet all 40 shots must land
+    sim = combat_sim(data=with_weapon("rifle", accuracy=(0.25, 0.25, 0.25)))
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    building = sim.spawn_building(1, "barracks", (29, 9))
+    building.hp = 1.0e6
+    start_hp = building.hp
+
+    fire_rounds(sim, shooter, 40)
+
+    events = shot_events(sim)
+    assert len(events) == 40
+    assert all(e.data["hit"] for e in events)
+    rifle = sim.data.weapons["rifle"]
+    assert start_hp - building.hp == 40 * rifle.damage * rifle.vs("building_light").damage
 
 
 def test_buildings_are_not_auto_targeted_below_the_damage_mod_threshold():
@@ -658,6 +744,75 @@ def test_team_weapon_redeploys_when_its_attack_order_walks_it_into_range():
     assert damage_taken(target) > 0.0
 
 
+def test_attack_on_an_in_range_target_settles_out_of_moving_and_fires():
+    sim = combat_sim()
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    target = dummy(sim, TARGET_CELL)
+    vision.run(sim)
+
+    # walking somewhere else when the Attack order lands
+    assert sim.issue(0, [Move(shooter.id, (SHOOTER_CELL[0], SHOOTER_CELL[1] + 5))])[0].ok
+    assert shooter.state is SquadState.MOVING
+    assert sim.issue(0, [Attack(shooter.id, target.id)])[0].ok
+    assert shooter.path == []  # the move is cancelled immediately
+
+    combat.run(sim)
+
+    assert shooter.state is SquadState.IDLE  # not stuck MOVING forever
+    assert shooter.target_id == target.id
+    assert len(shot_events(sim)) == 1
+    assert damage_taken(target) > 0.0
+
+
+def test_set_up_team_weapon_attacking_an_in_range_target_does_not_tear_down():
+    sim = combat_sim()
+    hmg = spawn(sim, 0, "hmg_team", SHOOTER_CELL)
+    hmg.state = SquadState.SET_UP
+    target = dummy(sim, TARGET_CELL, count=4)  # hmg range 35 m; target at 10 m
+    vision.run(sim)
+
+    assert sim.issue(0, [Attack(hmg.id, target.id)])[0].ok
+    assert hmg.state is SquadState.SET_UP
+
+    fire_rounds(sim, hmg, 1)
+
+    assert hmg.state is SquadState.SET_UP  # never went TEARING_DOWN / SETTING_UP
+    assert hmg.target_id == target.id
+    assert damage_taken(target) > 0.0  # the main weapon actually fired
+
+
+def test_attack_pursuit_state_lives_on_the_squad_and_is_hashed():
+    from coh.sim.state import canonical_state
+
+    sim = combat_sim()
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    target = dummy(sim, TARGET_CELL)
+    vision.run(sim)
+    sim.state.tick = 12
+
+    assert shooter.attack_last_seen_tick == -1
+    assert shooter.attack_last_repath_tick == -1
+    assert sim.issue(0, [Attack(shooter.id, target.id)])[0].ok
+    assert shooter.attack_last_seen_tick == 12  # validation just saw it
+    assert shooter.attack_last_repath_tick == -1  # may re-path at once
+
+    squad_row = next(r for r in canonical_state(sim.state)["squads"] if r["id"] == shooter.id)
+    assert squad_row["attack_last_seen_tick"] == 12
+    assert squad_row["attack_last_repath_tick"] == -1
+
+    before = sim.state_hash()
+    shooter.attack_last_seen_tick = 13
+    assert sim.state_hash() != before  # the fields are covered by the hash
+
+    shooter.attack_last_seen_tick = 12
+    combat.run(sim)
+    sim.issue(0, [Attack(shooter.id, target.id)])
+    # cleared with the order
+    combat._clear_attack_order(sim, shooter)
+    assert shooter.attack_last_seen_tick == -1
+    assert shooter.attack_last_repath_tick == -1
+
+
 def test_attack_order_is_cleared_when_the_target_dies():
     sim = combat_sim()
     shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
@@ -721,6 +876,7 @@ def test_combat_is_deterministic_for_a_given_seed():
     assert hashes[0] == hashes[1]
 
 
+@pytest.mark.perf
 def test_idle_squads_out_of_range_tick_combat_cheaply():
     sim = combat_sim()
     # 17 cells (34 m) apart: beyond the 30 m rifle range, so the squared-

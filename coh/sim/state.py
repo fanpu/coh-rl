@@ -64,6 +64,11 @@ class Squad:
     order: "Order | None" = None
     path: list[tuple[int, int]] = field(default_factory=list)
     target_id: int | None = None
+    # `Attack`-order pursuit bookkeeping (combat): the last tick the ordered
+    # target was visible to this squad's team, and the last tick the squad
+    # re-planned a path toward it. Both -1 until an `Attack` order is given.
+    attack_last_seen_tick: int = -1
+    attack_last_repath_tick: int = -1
     suppression: float = 0.0
     suppressed: bool = False
     pinned: bool = False
@@ -198,6 +203,8 @@ def _squad(s: Squad) -> dict[str, Any]:
         "order": None if s.order is None else order_to_dict(s.order),
         "path": [list(c) for c in s.path],
         "target_id": s.target_id,
+        "attack_last_seen_tick": s.attack_last_seen_tick,
+        "attack_last_repath_tick": s.attack_last_repath_tick,
         "suppression": _r(s.suppression),
         "suppressed": s.suppressed,
         "pinned": s.pinned,
