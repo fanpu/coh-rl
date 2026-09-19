@@ -124,8 +124,13 @@ def test_events_are_carried_and_merged_between_frames(frames):
 
 @pytest.mark.slow
 def test_a_longer_match_carries_the_combat_and_capture_events():
-    """30 s is barely a skirmish; the kinds the viewer animates need longer."""
-    frames = build_frames(play(180.0), EVERY, data=fixture_data())
+    """30 s is barely a skirmish; the kinds the viewer animates need longer.
+
+    On the now seat-symmetric map neither bot gets an early positional edge,
+    so first contact (a `shot` event) lands around 275 s rather than well
+    inside 180 s; 360 s keeps a comfortable margin over that.
+    """
+    frames = build_frames(play(360.0), EVERY, data=fixture_data())
     kinds = {e["k"] for frame in frames["frames"] for e in frame["events"]}
     assert {"shot", "point_captured", "unit_trained"} <= kinds
     shots = [e for frame in frames["frames"] for e in frame["events"] if e["k"] == "shot"]

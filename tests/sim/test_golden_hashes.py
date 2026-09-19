@@ -40,10 +40,17 @@ TIME_LIMIT_S = 1200.0
 # builder and every rally point out on the side facing the map centre, to
 # remove a measured seat-0 bias. Anything that moves these values *without*
 # such a ruling behind it is a regression: go find it, don't re-record.
+#
+# 2026-09-19: re-recorded again after the final-fix-env wave. `hedgerow_crossing`
+# was re-laid-out to be exactly seat-symmetric (e7d4026, a1ec07f) and `CohEnv`
+# now rotates which player's orders are issued first each step (8d8e499), so
+# match outcomes changed even though determinism did not: each seed was played
+# twice, in separate `uv run python` processes, and produced identical
+# (final tick, state_hash) both times.
 GOLDEN = {
-    0: (5439, "d6b89f91c9939f6ced0c2f14da6a85b20448c392a4b9b578b075945d219a987e"),
-    1: (9600, "6d6f60dcd4027b70dc00343c999dbc12683e4ca371e781b3e547dfe87851aaca"),
-    2: (9600, "a5b9d29701f90a070b3b2eb158a6bfb63d7129519042cab577becd7e07084558"),
+    0: (9600, "28470cddc808e0cca397175db8055540ca2a77f29b34044f5a5e439a3dc95c78"),
+    1: (9600, "5f47de228aa60f2731cd069cd9dc87cb26324876534e2a2858644dac849d2d10"),
+    2: (7759, "0fc1e5f97c869d5543670aea279eedb30552135a8a39f22a3524f86be81fb8e8"),
 }
 
 

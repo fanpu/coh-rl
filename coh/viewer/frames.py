@@ -374,7 +374,14 @@ def build_frames(
     sim: Sim | None = None
     for sim in resimulate(replay, data=data, game_map=game_map):
         for event in sim.state.events:
-            pending_events.append({"k": event.kind, "t": event.tick, "d": _round_any(event.data)})
+            # Sim systems stamp `Event.tick` with `sim.state.tick` *before* `Sim.tick`
+            # advances the counter, so an event's raw tick is the state time at which
+            # it was *decided*, one tick before its effects are visible. Frames are
+            # keyed by post-increment tick ("t" is the state time the frame snapshots),
+            # so we shift the serialized event time by +1 to match: this guarantees
+            # every event's "t" falls inside (previous_frame.t, frame.t] for the frame
+            # that carries it, which is the contract the viewer client relies on.
+            pending_events.append({"k": event.kind, "t": event.tick + 1, "d": _round_any(event.data)})
         if sim.state.tick % every_ticks == 0:
             delta = [[cx, cy, ch] for cx, cy, ch in sim.state.terrain_changes[terrain_seen:]]
             terrain_seen = len(sim.state.terrain_changes)
