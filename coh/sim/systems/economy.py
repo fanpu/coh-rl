@@ -1,0 +1,15 @@
+"""economy — income, upkeep and population cap (task 14).
+
+Stub: task 14 fills this in.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from coh.sim.sim import Sim
+
+
+def run(sim: "Sim") -> None:
+    """Advance the economy system by one tick."""
