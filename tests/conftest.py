@@ -7,6 +7,7 @@ import pytest
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "perf: wall-clock performance assertions")
+    config.addinivalue_line("markers", "slow: whole-match runs (seconds, not milliseconds)")
 
 
 @pytest.fixture
