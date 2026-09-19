@@ -15,10 +15,12 @@ Direct-fire only. One tick of combat is, per squad in ascending id order:
    whether the bullet hit;
 5. `schedule_next_shot` — cooldown and reload bookkeeping.
 
-Later tasks extend exactly these seams: task 9 consumes `squad.suppression`
-and adds nearby spill, task 10 adds arcs / indirect fire / abandoned team
-weapons, task 11 adds penetration to `apply_hit`, task 12 fills in
-`on_building_destroyed`.
+Later tasks extend exactly these seams: task 9's `add_suppression` spills
+part of every bullet's suppression to nearby squads on the victim's side
+(`_spill_suppression`), while `coh/sim/systems/suppression.py` owns the
+slower per-tick decay and `suppressed`/`pinned` thresholds; task 10 adds
+arcs / indirect fire / abandoned team weapons, task 11 adds penetration to
+`apply_hit`, task 12 fills in `on_building_destroyed`.
 
 RNG discipline: every draw comes from `sim.state.rng`, in a fixed order
 (squads ascending id -> members in loadout order -> burst length -> per
@@ -625,10 +627,45 @@ def add_suppression(
     # facing both need them regardless of the suppression meter.
     victim.last_hit_tick = sim.state.tick
     victim.last_attacker_pos = (float(attacker.pos[0]), float(attacker.pos[1]))
+    s = weapon.suppression[band] * mult
     sdef = sim.data.squads.get(victim.def_id)
-    if sdef is None or sdef.suppression is None:
-        return  # vehicles and the like are immune
-    victim.suppression = min(1.0, max(0.0, victim.suppression + weapon.suppression[band] * mult))
+    # A squad that is retreating ignores suppression entirely (task 9): it is
+    # cleared to 0 on `Retreat` and never accumulates again while en route.
+    if sdef is not None and sdef.suppression is not None and victim.state is not SquadState.RETREATING:
+        victim.suppression = min(1.0, max(0.0, victim.suppression + s))
+    _spill_suppression(sim, victim, weapon, s)
+
+
+def _spill_suppression(sim: "Sim", victim: Squad, weapon: WeaponDef, s: float) -> None:
+    """Spill part of a bullet's suppression to squads near the victim.
+
+    Every other squad on the victim's side (an enemy of the shooter) within
+    `weapon.nearby_suppression_radius` of the victim's position gains
+    `s * weapon.nearby_suppression_mult`. This only sets `last_hit_tick`
+    (recovery's out-of-combat timer); it never touches `last_attacker_pos`,
+    since the spilled-onto squad was not itself the bullet's aim point.
+    """
+    if weapon.nearby_suppression_radius <= 0.0 or s == 0.0:
+        return
+    victim_team = _team_of(sim, victim.owner)
+    spill = s * weapon.nearby_suppression_mult
+    radius2 = weapon.nearby_suppression_radius * weapon.nearby_suppression_radius
+    for sid in sorted(sim.state.squads):
+        if sid == victim.id:
+            continue
+        other = sim.state.squads[sid]
+        if not other.alive_members or other.state is SquadState.RETREATING:
+            continue
+        if _team_of(sim, other.owner) != victim_team:
+            continue
+        other_sdef = sim.data.squads.get(other.def_id)
+        if other_sdef is None or other_sdef.suppression is None:
+            continue
+        dist2 = float(((other.pos - victim.pos) ** 2).sum())
+        if dist2 > radius2:
+            continue
+        other.last_hit_tick = sim.state.tick
+        other.suppression = min(1.0, max(0.0, other.suppression + spill))
 
 
 # -- damage -----------------------------------------------------------------

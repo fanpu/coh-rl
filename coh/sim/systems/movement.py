@@ -100,7 +100,12 @@ def start_path(sim: "Sim", squad: "Squad", order: orders_mod.Order, goal_cell: t
 
     squad.path = list(path[1:])  # drop the start cell; keep remaining waypoints
 
-    if sdef.kind == "team_weapon" and squad.state in (SquadState.SET_UP, SquadState.SETTING_UP):
+    # A team weapon normally spends `setup_time` tearing down before it can
+    # travel. `Retreat` is the one exception (task 9): a retreating crew
+    # abandons its weapon instantly rather than packing it up, so it skips
+    # straight to `moving_state` (RETREATING) like any other squad.
+    deployed = sdef.kind == "team_weapon" and squad.state in (SquadState.SET_UP, SquadState.SETTING_UP)
+    if deployed and moving_state is not SquadState.RETREATING:
         squad.state = SquadState.TEARING_DOWN
         squad.setup_done_tick = sim.state.tick + setup_ticks(sim, sdef)
     elif not squad.path:

@@ -178,7 +178,17 @@ def test_infantry_covers_speed_times_time_in_80_ticks():
     assert squad.order is None
 
 
-def test_pinned_squad_does_not_move():
+def test_pinned_squad_does_not_move(monkeypatch):
+    # This test is about the speed-multiplier gate `_speed_mult` reads off
+    # `squad.pinned`, not about the flag's own lifetime (task 9's real
+    # concern), so the suppression system -- which would otherwise decay a
+    # bare flag with no backing `squad.suppression` value straight back off
+    # -- is stubbed out here, the same way `no_combat` isolates movement
+    # tests from combat.
+    from coh.sim.systems import suppression
+
+    monkeypatch.setattr(suppression, "run", lambda sim: None)
+
     sim = make_sim()
     squad = spawn(sim, 0, "rifles", (10, 10))
     squad.pinned = True
@@ -189,7 +199,11 @@ def test_pinned_squad_does_not_move():
     assert squad.moving is False
 
 
-def test_suppressed_squad_moves_at_suppressed_speed_mult():
+def test_suppressed_squad_moves_at_suppressed_speed_mult(monkeypatch):
+    from coh.sim.systems import suppression
+
+    monkeypatch.setattr(suppression, "run", lambda sim: None)  # see test_pinned_squad_does_not_move
+
     sim = make_sim()
     econ = fixture_data().economy
     squad = spawn(sim, 0, "rifles", (10, 10))

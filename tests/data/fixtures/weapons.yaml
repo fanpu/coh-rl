@@ -40,6 +40,8 @@ weapons:
     setup_time: 3.0
     arc_deg: 90.0
     moving_accuracy: 0.0
+    nearby_suppression_mult: 0.5
+    nearby_suppression_radius: 6.0
     cover_table:
       heavy: {accuracy: 0.5, damage: 0.5, suppression: 0.1}
       light: {accuracy: 0.5, damage: 1.0, suppression: 0.5}
