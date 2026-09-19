@@ -1,0 +1,74 @@
+# Hand-written: the coh-stats mirror carries no resource, territory or victory
+# data. See docs/data-sources.md for the survey behind every figure here.
+source: >-
+  Hand-authored from docs/data-sources.md. Sourced: point income 5 / 10 / 16 per
+  minute (companyofheroes.fandom.com), +3 manpower per held point, Observation
+  Post multiplier x1.6 (Steam Full Knowledge Guide id 2876755869: +5->+8,
+  +10->+16, +16->+24), base population 30 with +2 strategic and +3/+5/+7 per
+  low/medium/high resource sector and a 75 cap (ACGIM README), 500 victory
+  tickets ticking every 4 s in proportion to the victory-point lead, HQ +5 fuel
+  per minute (fandom), suppression recovery constants and cover recovery
+  multipliers from coh-stats Info:Suppression (noncombat delay 7 s then x50;
+  light 2.5, heavy 5, negative 0.5, garrison 500), pinned effects from the same
+  page (received accuracy x2 after 10 s pinned; suppressed = actions disabled,
+  speed halved). Everything under `estimated:` is not in any source we found.
+estimated:
+  base_income_per_min.manpower: >-
+    Base manpower income is not published anywhere we could verify. 270/min with
+    income = base + per-point manpower - total upkeep reproduces the usual
+    early-game feel; see min_manpower_income_frac for the floor.
+  point_income.strategic.manpower: >-
+    "+3 manpower per held point" is a search-snippet claim in docs/data-sources.md,
+    unconfirmed against a primary source; applied to every capturable sector type.
+  capture_time_s: "Per-sector capture times were not extracted; 20 s for every sector type."
+  neutralize_time_s: "Not extracted; 10 s (half the capture time) for every sector type."
+  capture_radius: "Not extracted; 6 m around the sector's capture point."
+  start_resources: "Starting resources not extracted; 350 MP / 0 MU / 20 F."
+  suppressed_speed_mult: >-
+    Info:Suppression says "Moving Speed - 2" without units; modelled as a x0.5
+    speed multiplier.
+  suppressed_accuracy_mult: "Not published as a number; suppressed squads fire at half accuracy."
+  suppressed_cooldown_mult: "Not published as a number; suppressed squads reload/cool twice as slowly."
+  retreat_speed_mult: "Retreat speed bonus not extracted; x1.5."
+  reinforce_base_cost_frac: >-
+    Per-model reinforce cost is squad cost / members x this fraction x the squad's
+    own reinforce_cost_mult; the 0.5 base is assumed.
+  tickets_per_vp_lead: "VP ticker drain rate unconfirmed; 1 ticket per point of victory-point lead per tick."
+  garrison_collapse_damage_frac: "Damage dealt to occupants when their building collapses; used by the garrison task."
+  min_manpower_income_frac: "Floor on manpower income once upkeep exceeds income, as a fraction of base."
+  cover_recovery_mult.open: >-
+    Info:Suppression lists a "Default" multiplier of 1 and a separate, unused
+    "Open (Unused)" cover type at 0.75; our `open` (= no cover) uses Default.
+
+economy:
+  start_resources: {manpower: 350, munitions: 0, fuel: 0}
+  base_income_per_min: {manpower: 270, munitions: 0, fuel: 5}
+  base_population: 30
+  max_population: 75
+  point_income:
+    strategic: {manpower: 3, population: 2}
+    munitions_low: {manpower: 3, munitions: 5, population: 3}
+    munitions_med: {manpower: 3, munitions: 10, population: 5}
+    munitions_high: {manpower: 3, munitions: 16, population: 7}
+    fuel_low: {manpower: 3, fuel: 5, population: 3}
+    fuel_med: {manpower: 3, fuel: 10, population: 5}
+    fuel_high: {manpower: 3, fuel: 16, population: 7}
+    victory: {manpower: 3, population: 2}
+  op_income_mult: 1.6
+  op_building: {us: op_us, wehr: op_wehr}
+  capture_time_s: 20
+  neutralize_time_s: 10
+  capture_radius: 6
+  tickets: 500
+  ticket_interval_s: 4
+  tickets_per_vp_lead: 1
+  retreat_speed_mult: 1.5
+  suppressed_speed_mult: 0.5
+  suppressed_accuracy_mult: 0.5
+  suppressed_cooldown_mult: 2.0
+  noncombat_recovery_delay_s: 7
+  noncombat_recovery_mult: 50
+  cover_recovery_mult: {open: 1.0, light: 2.5, heavy: 5.0, negative: 0.5, garrison: 500.0}
+  reinforce_base_cost_frac: 0.5
+  garrison_collapse_damage_frac: 0.25
+  min_manpower_income_frac: 0.25

@@ -295,8 +295,17 @@ def _load_squads(path: Path) -> dict[str, SquadDef]:
         _check_keys(raw, _SQUAD_REQUIRED | _SQUAD_OPTIONAL, _SQUAD_REQUIRED, path, sid)
 
         members = int(raw["members"])
+        kind = str(raw["kind"])
         loadout_raw = raw["loadout"]
-        if not isinstance(loadout_raw, (list, tuple)) or len(loadout_raw) != members:
+        if not isinstance(loadout_raw, (list, tuple)):
+            raise DataError(f"{path.name}:{sid}: 'loadout' must be a list")
+        # Infantry and team weapons carry one weapon slot per model. A vehicle is a
+        # single model mounting all of its weapons, so its loadout is any non-empty
+        # list (main gun first) rather than one entry per member.
+        if kind == "vehicle":
+            if not loadout_raw:
+                raise DataError(f"{path.name}:{sid}: vehicle 'loadout' must list at least one weapon")
+        elif len(loadout_raw) != members:
             raise DataError(f"{path.name}:{sid}: 'loadout' must be a list of length members ({members})")
         loadout = tuple(str(w) for w in loadout_raw)
 
@@ -309,7 +318,7 @@ def _load_squads(path: Path) -> dict[str, SquadDef]:
         squads[sid] = SquadDef(
             id=sid,
             faction=str(raw["faction"]),
-            kind=str(raw["kind"]),
+            kind=kind,
             members=members,
             member_hp=float(raw["member_hp"]),
             loadout=loadout,

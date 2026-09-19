@@ -1,0 +1,47 @@
+# Forward-port of the official CoH 2.602 release notes onto the scraped
+# ~2.600/2.601 coh-stats data.
+#
+# Source: https://www.gamereplays.org/community/Official_CoH_2602_Release_Notes-t782742.html
+#
+# Only deltas that touch a roster unit AND a field this project models are listed.
+# `old` is asserted against the scraped value before `new` is written, so a change
+# in the mirror or a misreading of the notes fails the scrape loudly.
+#
+# Notes-to-field mapping:
+#   "Received Accuracy/Damage from X" -> X's weapon target_table row for the receiver
+#   "Accuracy vs Y"                   -> this weapon's target_table row for Y
+#
+# Release-note items deliberately not encoded (field not modelled): pack-up times,
+# ready-aim time, weapon-platform health (towed guns), reinforcement flat costs,
+# acceleration/deceleration, veterancy, drop chances, barrage scatter, experience.
+# Three items could not be reconciled with the scraped numbers and were dropped
+# rather than guessed (see task-3-report.md): 57 mm "Received Damage vs Jeep
+# 1.0->0.5" (scraped 1.5), Pak 38 "Received Accuracy vs moving Jeep 0.75->0.5"
+# (scraped 0.6), BAR "Received Damage vs Heroic 0.85->0.78" (scraped damage 0.75).
+
+patches:
+  # --- American ---
+  - {table: weapons, id: mortar_60mm, field: setup_time, old: 2.4, new: 1.5}
+  - {table: squads, id: engineers, field: suppression.suppress_at, old: 0.02, new: 0.2}
+  - {table: squads, id: engineers, field: suppression.suppress_recover, old: 0.01, new: 0.15}
+  - {table: weapons, id: atgun_57mm, field: target_table.infantry.accuracy, old: 0.15, new: 0.05}
+  - {table: weapons, id: atgun_57mm, field: target_table.infantry_sniper.accuracy, old: 0.15, new: 0.02}
+  - {table: weapons, id: atgun_57mm, field: target_table.infantry_sniper.priority, old: 10, new: 5}
+  - {table: weapons, id: atgun_57mm, field: target_table.towed_gun.accuracy, old: 0.5, new: 0.1}
+  - {table: weapons, id: springfield_sniper_rifle, field: cover_table.garrison.accuracy, old: 0.75, new: 1.0}
+
+  # --- Wehrmacht ---
+  - {table: squads, id: hmg_mg42_team, field: cost.manpower, old: 260, new: 250}
+  - {table: squads, id: hmg_mg42_team, field: build_time, old: 40, new: 35}
+  - {table: squads, id: pak38_team, field: cost.manpower, old: 310, new: 290}
+  - {table: squads, id: volksgrenadiers, field: reinforce_cost_mult, old: 0.5, new: 0.4}
+  - {table: weapons, id: pak38_50mm, field: target_table.infantry.accuracy, old: 0.15, new: 0.05}
+  - {table: weapons, id: pak38_50mm, field: target_table.infantry_sniper.accuracy, old: 0.15, new: 0.02}
+  - {table: weapons, id: pak38_50mm, field: target_table.infantry_sniper.priority, old: 10, new: 5}
+  - {table: weapons, id: pak38_50mm, field: target_table.towed_gun.accuracy, old: 0.5, new: 0.1}
+  - {table: weapons, id: pak38_50mm, field: target_table.armour_sherman.accuracy, old: 1.0, new: 1.1}
+  - {table: weapons, id: pak38_50mm, field: target_table.vehicle_jeep.accuracy, old: 1.0, new: 0.75}
+  - {table: weapons, id: panzerschreck, field: target_table.vehicle_m8.accuracy, old: 0.73, new: 0.85}
+  - {table: weapons, id: panzerschreck, field: target_table.vehicle_m3.accuracy, old: 1.0, new: 0.85}
+  - {table: weapons, id: mg42_lmg, field: accuracy.long, old: 0.1, new: 0.13}
+  - {table: weapons, id: gewehr_43_sniper_rifle, field: cover_table.garrison.accuracy, old: 0.75, new: 1.0}

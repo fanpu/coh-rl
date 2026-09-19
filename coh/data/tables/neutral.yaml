@@ -1,0 +1,34 @@
+# Hand-written: ambient (map-owned) garrisonable buildings. The coh-stats mirror
+# documents only player-built structures, so none of these numbers are scraped.
+source: >-
+  Hand-authored. `target_type: building` is the coh-stats target type used by every
+  non-checkpoint structure, and is present in every scraped weapon target table, so
+  small-arms/AT/HE modifiers against these buildings come from real data even though
+  their hit points and capacity do not.
+estimated:
+  house_small.hp: "Ambient building hit points are not in any source we found."
+  house_small.capacity: "Garrison capacity of ambient buildings not extracted; 1 squad."
+  house_small.footprint: "Footprint chosen for the 2 m grid: 6 m x 6 m."
+  house_large.hp: "Ambient building hit points are not in any source we found."
+  house_large.capacity: "Garrison capacity of ambient buildings not extracted; 2 squads."
+  house_large.footprint: "Footprint chosen for the 2 m grid: 8 m x 8 m."
+  barn.hp: "Ambient building hit points are not in any source we found."
+  barn.capacity: "Garrison capacity of ambient buildings not extracted; 3 squads."
+  barn.footprint: "Footprint chosen for the 2 m grid: 10 m x 8 m."
+
+neutral:
+  house_small:
+    hp: 400
+    target_type: building
+    capacity: 1
+    footprint: [3, 3]
+  house_large:
+    hp: 700
+    target_type: building
+    capacity: 2
+    footprint: [4, 4]
+  barn:
+    hp: 900
+    target_type: building
+    capacity: 3
+    footprint: [5, 4]

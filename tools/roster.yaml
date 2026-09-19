@@ -1,0 +1,495 @@
+# Roster and authored decisions for tools/scrape_coh_stats.py.
+#
+# Everything in this file is scope + judgement: which coh-stats pages are in the
+# M1 roster, which id each page gets, and the handful of facts the mirror does
+# not state (squad weapon counts, building footprints, tech prerequisites).
+# All *numbers* that the mirror does state are scraped, never written here.
+#
+# Source mirror: https://www.hq-coh.com/stats/coh-stats.com/ (Dec 2013 static
+# copy of coh-stats.com, data ~2.600/2.601; patched forward by patch_2602.yaml).
+
+source_base: "https://www.hq-coh.com/stats/coh-stats.com/"
+
+# --- target types ---------------------------------------------------------------
+# Weapon "Target Table" rows are labelled with display names; unit pages carry the
+# internal target-type name. This maps display name -> internal name, and doubles
+# as the filter: only these rows are kept in each weapon's target_table.
+target_types:
+  Infantry: infantry
+  Infantry Sniper: infantry_sniper
+  Infantry Heroic: infantry_heroic
+  Towed Gun: towed_gun
+  Jeep: vehicle_jeep
+  Motorcycle: vehicle_motorcycle
+  M3 Halftrack: vehicle_m3
+  Sdkfz 251 Halftrack: vehicle_251
+  Greyhound: vehicle_m8
+  Sdkfz 234 Puma: vehicle_234
+  M10 TD: armour_m10
+  Sherman: armour_sherman
+  StuG: armour_stug
+  Panzer IV: armour_panzer
+  Panther: armour_panther
+  Flak Panzer: armour_ostwind
+  Building: building
+  Checkpoint: building_checkpoint
+
+# --- weapons --------------------------------------------------------------------
+# `indirect: true` marks the mortar barrels: they arc over cover, have a minimum
+# range and land by scatter rather than by a line-of-fire accuracy roll.
+weapons:
+  m1_garand: {page: Weapon_M1_Garand}
+  m1_carbine: {page: Weapon_M1_Carbine}
+  grease_gun: {page: Weapon_Grease_Gun}
+  browning_automatic_rifle: {page: Weapon_Browning_Automatic_Rifle}
+  springfield_sniper_rifle: {page: Weapon_Springfield_Sniper_Rifle}
+  hmg_30cal: {page: Weapon_30_Cal_HMG}
+  mortar_60mm: {page: Weapon_60mm_Mortar, indirect: true}
+  atgun_57mm: {page: Weapon_57mm_AT_Gun}
+  mg_30cal_jeep: {page: Weapon_30_Cal_Jeep_MG}
+  mg_30cal_coaxial: {page: Weapon_30_Cal_Coaxial_MG}
+  mg_30cal_hull: {page: Weapon_30_Cal_Hull_MG}
+  mg_m2hb_halftrack: {page: Weapon_M2HB_Halftrack_MG}
+  gun_37mm_greyhound: {page: Weapon_37mm_Greyhound}
+  gun_75mm_sherman: {page: Weapon_75mm_Sherman}
+  gun_3in_tank_destroyer: {page: Weapon_3in_Tank_Destroyer}
+
+  kar98k_volksgrenadier: {page: Weapon_Kar98K_Volksgrenadier}
+  kar98k_leader: {page: Weapon_Wehrmacht_Kar98K_Leader}
+  kar98k_elite: {page: Weapon_Wehrmacht_Kar98K_Elite}
+  mp40: {page: Weapon_MP40_Sub_Machine_Gun}
+  mp40_pioneer: {page: Weapon_MP40_Sub_Machine_Gun_Pioneer}
+  mp44_assault_rifle: {page: Weapon_MP44_Assault_Rifle}
+  gewehr_43_sniper_rifle: {page: Weapon_Gewehr_43_Sniper_Rifle}
+  luger_pistol: {page: Weapon_Luger_Pistol}
+  mg42: {page: Weapon_MG42}
+  mg42_lmg: {page: Weapon_MG42_LMG}
+  panzerschreck: {page: Weapon_Wehrmacht_Panzerschreck}
+  mortar_81mm: {page: Weapon_81mm_Mortar, indirect: true}
+  pak38_50mm: {page: Weapon_50mm_Pak_38}
+  mg42_motorcycle: {page: Weapon_MG42_Motorcycle}
+  mg42_vehicle: {page: Weapon_MG42_Vehicle}
+  mg42_coaxial: {page: Weapon_MG42_Coaxial_MG}
+  mg42_hull: {page: Weapon_MG42_Hull_MG}
+  mg42_turret: {page: Weapon_MG42_Turret}
+  gun_20mm_puma: {page: Weapon_20mm_Puma}
+  gun_75mm_stug: {page: Weapon_75mm_StuG}
+  gun_75mm_panzer: {page: Weapon_75mm_Panzer}
+  gun_75mm_panther: {page: Weapon_75mm_Panther}
+  gun_37mm_ostwind: {page: Weapon_37mm_Ostwind}
+
+# --- squads ---------------------------------------------------------------------
+# `loadout` is [weapon id, count] pairs. The mirror lists *which* weapons a squad
+# carries but never how many of each, so the counts are authored (see estimated:
+# notes emitted into squads.yaml). Vehicles carry all their default weapons on the
+# single model, main gun first.
+# `entity` is an omgmod entities.json reference, used only for infantry/team-weapon
+# `speed` + `rotation_deg_s` and for `crushes_light_cover` (pass_type presence);
+# vehicles take speed/rotation from their coh-stats page.
+# `suppression_key` is the unit's row in Info:Suppression (per-faction table).
+squads:
+  engineers:
+    page: Infantry_Engineers
+    faction: us
+    kind: infantry
+    loadout: [[grease_gun, 3]]
+    entity: ebps/races/allies/soldiers/engineer
+    suppression_key: Engineers
+    builds: [barracks_us, weapons_support_center_us, supply_yard_us, motor_pool_us, tank_depot_us, op_us]
+    can_garrison: true
+  riflemen:
+    page: Infantry_Riflemen
+    faction: us
+    kind: infantry
+    loadout: [[m1_carbine, 1], [m1_garand, 5]]
+    entity: ebps/races/allies/soldiers/infantry_rifleman
+    suppression_key: Riflemen
+    builds: [op_us]
+    can_garrison: true
+  sniper_us:
+    page: Infantry_American_Sniper
+    faction: us
+    kind: infantry
+    loadout: [[springfield_sniper_rifle, 1]]
+    entity: ebps/races/allies/soldiers/sniper
+    suppression_key: Sniper
+    can_garrison: true
+  hmg_30cal_team:
+    page: Infantry_Heavy_Machine_Gun_Team
+    faction: us
+    kind: team_weapon
+    loadout: [[hmg_30cal, 1], [m1_carbine, 2]]
+    entity: ebps/races/allies/soldiers/machine_gun_crew
+    suppression_key: Heavy Machine Gun Team
+    can_garrison: true
+  mortar_60mm_team:
+    page: Infantry_Mortar_Team
+    faction: us
+    kind: team_weapon
+    loadout: [[mortar_60mm, 1], [m1_carbine, 2]]
+    entity: ebps/races/allies/soldiers/mortar_gunner
+    suppression_key: Mortar Team
+    can_garrison: true
+  atgun_57mm_team:
+    page: Vehicle_M1_57mm_Anti_Tank_Gun
+    faction: us
+    kind: team_weapon
+    loadout: [[atgun_57mm, 1], ["", 2]]
+    entity: ebps/races/allies/vehicles/m1_57mm_towed_at_gun
+    can_garrison: false
+  jeep:
+    page: Vehicle_Jeep
+    faction: us
+    kind: vehicle
+    loadout: [[mg_30cal_jeep, 1]]
+    entity: ebps/races/allies/vehicles/jeep
+  m3_halftrack:
+    page: Vehicle_M3_Halftrack
+    faction: us
+    kind: vehicle
+    loadout: [[mg_m2hb_halftrack, 1]]
+    entity: ebps/races/allies/vehicles/m3_halftrack
+  m8_greyhound:
+    page: Vehicle_M8_Armored_Car
+    faction: us
+    kind: vehicle
+    loadout: [[gun_37mm_greyhound, 1], [mg_30cal_coaxial, 1]]
+    entity: ebps/races/allies/vehicles/m8_greyhound
+  m10_tank_destroyer:
+    page: Vehicle_M10_Tank_Destroyer
+    faction: us
+    kind: vehicle
+    loadout: [[gun_3in_tank_destroyer, 1]]
+    entity: ebps/races/allies/vehicles/m10_tank_destroyer
+  m4_sherman:
+    page: Vehicle_M4_Sherman
+    faction: us
+    kind: vehicle
+    loadout: [[gun_75mm_sherman, 1], [mg_30cal_coaxial, 1], [mg_30cal_hull, 1]]
+    entity: ebps/races/allies/vehicles/m4_sherman
+
+  pioneers:
+    page: Infantry_Pioneers
+    faction: wehr
+    kind: infantry
+    loadout: [[mp40_pioneer, 2]]
+    entity: ebps/races/axis/soldiers/pioneer
+    suppression_key: Pioneers
+    builds: [quarters_wehr, krieg_barracks_wehr, sturm_armory_wehr, panzer_command_wehr, op_wehr]
+    can_garrison: true
+  volksgrenadiers:
+    page: Infantry_Volksgrenadiers
+    faction: wehr
+    kind: infantry
+    loadout: [[kar98k_leader, 1], [kar98k_volksgrenadier, 4]]
+    entity: ebps/races/axis/soldiers/volksgrenadier
+    suppression_key: Volksgrenadiers
+    can_garrison: true
+  grenadiers:
+    page: Infantry_Grenadiers
+    faction: wehr
+    kind: infantry
+    loadout: [[kar98k_leader, 1], [kar98k_elite, 3]]
+    entity: ebps/races/axis/soldiers/grenadier
+    suppression_key: Grenadiers
+    can_garrison: true
+  knights_cross_holders:
+    page: "Infantry_Knight%27s_Cross_Holders"
+    faction: wehr
+    kind: infantry
+    loadout: [[mp44_assault_rifle, 3]]
+    entity: ebps/races/axis/soldiers/knights_cross_holder
+    suppression_key: "Knight's Cross Holders"
+    can_garrison: true
+  sniper_wehr:
+    page: Infantry_Wehrmacht_Sniper
+    faction: wehr
+    kind: infantry
+    loadout: [[gewehr_43_sniper_rifle, 1]]
+    entity: ebps/races/axis/soldiers/sniper
+    suppression_key: Sniper
+    can_garrison: true
+  hmg_mg42_team:
+    page: Infantry_MG42_Heavy_Machine_Gun
+    faction: wehr
+    kind: team_weapon
+    loadout: [[mg42, 1], [mp40_pioneer, 2]]
+    entity: ebps/races/axis/soldiers/weapon_crew
+    suppression_key: MG42 Heavy Machine Gun
+    can_garrison: true
+  mortar_81mm_team:
+    page: Infantry_Gr
+    faction: wehr
+    kind: team_weapon
+    loadout: [[mortar_81mm, 1], [luger_pistol, 2]]
+    entity: ebps/races/axis/soldiers/mortar_gunner
+    suppression_key: Gr. 34 8cm Mortar Team
+    can_garrison: true
+  pak38_team:
+    page: Vehicle_Pak_38_50mm_Anti_Tank_Gun
+    faction: wehr
+    kind: team_weapon
+    loadout: [[pak38_50mm, 1], [luger_pistol, 2]]
+    entity: ebps/races/axis/vehicles/50mm_pak38
+    can_garrison: false
+  motorcycle:
+    page: Vehicle_Motorcycle
+    faction: wehr
+    kind: vehicle
+    loadout: [[mg42_motorcycle, 1]]
+    entity: ebps/races/axis/vehicles/motorcycle
+  sdkfz251_halftrack:
+    page: Vehicle_Sdkfz_251_Halftrack
+    faction: wehr
+    kind: vehicle
+    loadout: [[mg42_vehicle, 1]]
+    entity: ebps/races/axis/vehicles/sdkfz_251_halftrack
+  puma:
+    page: Vehicle_Sdkfz_234_Armored_Car
+    faction: wehr
+    kind: vehicle
+    loadout: [[gun_20mm_puma, 1], [mg42_coaxial, 1]]
+    entity: ebps/races/axis/vehicles/sdkfz234_armoured_car
+  stug_iv:
+    page: Vehicle_Stug_IV
+    faction: wehr
+    kind: vehicle
+    loadout: [[gun_75mm_stug, 1], [mg42_vehicle, 1]]
+    entity: ebps/races/axis/vehicles/stug_iv
+  panzer_iv:
+    page: Vehicle_Panzer_IV
+    faction: wehr
+    kind: vehicle
+    loadout: [[gun_75mm_panzer, 1], [mg42_coaxial, 1], [mg42_hull, 1], [mg42_turret, 1]]
+    entity: ebps/races/axis/vehicles/panzer_iv
+  panther:
+    page: Vehicle_Wehrmacht_Panther
+    faction: wehr
+    kind: vehicle
+    loadout: [[gun_75mm_panther, 1], [mg42_coaxial, 1], [mg42_hull, 1], [mg42_turret, 1]]
+    entity: ebps/races/axis/vehicles/panther
+  ostwind:
+    page: Vehicle_Ostwind_Flakpanzer
+    faction: wehr
+    kind: vehicle
+    loadout: [[gun_37mm_ostwind, 1], [mg42_hull, 1]]
+    entity: ebps/races/axis/vehicles/ostwind_flak_panzer
+
+# --- buildings ------------------------------------------------------------------
+# `footprint` is authored: the mirror carries no building dimensions.
+# `requires` is all-of. US prerequisites verified on Structure:Supply Yard
+# ("Requires Barracks OR Weapons Support Center", "Unlocks Motor Pool / Tank
+# Depot") and cross-checked on the fandom wiki (Motor Pool and Tank Depot both
+# `prereq = An existing Supply Yard`). The OR is approximated by Barracks.
+# Wehrmacht gating is the phase chain researched at the Reich HQ.
+buildings:
+  hq_us:
+    page: Structure_American_Headquarters
+    faction: us
+    footprint: [5, 5]
+    requires: []
+    is_hq: true
+  barracks_us:
+    page: Structure_Barracks
+    faction: us
+    footprint: [4, 3]
+    requires: [hq_us]
+    is_hq: false
+  weapons_support_center_us:
+    page: Structure_Weapons_Support_Center
+    faction: us
+    footprint: [4, 3]
+    requires: [hq_us]
+    is_hq: false
+  supply_yard_us:
+    page: Structure_Supply_Yard
+    faction: us
+    footprint: [3, 3]
+    requires: [barracks_us]
+    is_hq: false
+  motor_pool_us:
+    page: Structure_Motor_Pool
+    faction: us
+    footprint: [4, 4]
+    requires: [supply_yard_us]
+    is_hq: false
+  tank_depot_us:
+    page: Structure_Tank_Depot
+    faction: us
+    footprint: [5, 4]
+    requires: [supply_yard_us]
+    is_hq: false
+  op_us:
+    page: Structure_American_Observation_Post
+    faction: us
+    footprint: [2, 2]
+    requires: [hq_us]
+    is_hq: false
+
+  hq_wehr:
+    page: Structure_Reich_Headquarters
+    faction: wehr
+    footprint: [5, 5]
+    requires: []
+    is_hq: true
+  quarters_wehr:
+    page: Structure_Wehrmacht_Quarters
+    faction: wehr
+    footprint: [4, 3]
+    requires: [hq_wehr]
+    is_hq: false
+  krieg_barracks_wehr:
+    page: Structure_Krieg_Barracks
+    faction: wehr
+    footprint: [4, 3]
+    requires: [skirmish_phase]
+    is_hq: false
+  sturm_armory_wehr:
+    page: Structure_Sturm_Armory
+    faction: wehr
+    footprint: [4, 4]
+    requires: [assault_phase]
+    is_hq: false
+  panzer_command_wehr:
+    page: Structure_Panzer_Command
+    faction: wehr
+    footprint: [5, 4]
+    requires: [battle_phase]
+    is_hq: false
+  op_wehr:
+    page: Structure_Wehrmacht_Observation_Post
+    faction: wehr
+    footprint: [2, 2]
+    requires: [hq_wehr]
+    is_hq: false
+
+# --- global upgrades ------------------------------------------------------------
+# upkeep_mult from the Supply Yard page effect text: "Decrease the Upkeep cost of
+# your Troops by 25%" and "...by an additional 25%" (applied multiplicatively).
+upgrades:
+  supply_yard_l1:
+    page: Upgrade_Level_1_Production
+    faction: us
+    requires: [supply_yard_us]
+    upkeep_mult: 0.75
+  supply_yard_l2:
+    page: Upgrade_Level_2_Production
+    faction: us
+    requires: [supply_yard_l1]
+    upkeep_mult: 0.75
+  skirmish_phase:
+    page: Upgrade_Escalate_to_Skirmish_Phase
+    faction: wehr
+    requires: [hq_wehr]
+  assault_phase:
+    page: Upgrade_Escalate_to_Assault_Phase
+    faction: wehr
+    requires: [skirmish_phase]
+  battle_phase:
+    page: Upgrade_Escalate_to_Battle_Phase
+    faction: wehr
+    requires: [assault_phase]
+
+# --- per-squad weapon upgrades --------------------------------------------------
+# `count` (member weapon slots replaced) is authored: the mirror states the cost,
+# time, weapon and eligible squads but not how many models get the weapon.
+# `requires` from the upgrade pages' "Upgraded At" / the phase pages' "Unlocks".
+squad_upgrades:
+  bar_riflemen:
+    page: Upgrade_Browning_Automatic_Rifle
+    applies_to: [riflemen]
+    weapon: browning_automatic_rifle
+    count: 2
+    requires: [barracks_us]
+  mp40_volksgrenadiers:
+    page: "Upgrade_MP40_Sub-Machine_gun"
+    applies_to: [volksgrenadiers]
+    weapon: mp40
+    count: 5
+    requires: [skirmish_phase]
+  mg42_lmg_grenadiers:
+    page: Upgrade_MG42_Light_Machine_Gun
+    applies_to: [grenadiers]
+    weapon: mg42_lmg
+    count: 1
+    requires: [assault_phase]
+  panzerschreck_grenadiers:
+    page: Upgrade_Wehrmacht_Panzerschreck
+    applies_to: [grenadiers]
+    weapon: panzerschreck
+    count: 2
+    requires: [skirmish_phase]
+
+# --- deliberately out of scope --------------------------------------------------
+skipped:
+  Infantry_Rangers: "Doctrinal (Infantry Company) call-in; out of M1 scope."
+  Infantry_Airborne: "Doctrinal (Airborne) call-in; out of M1 scope."
+  Infantry_Officer: "Wehrmacht Officer is an aura/ability unit; abilities are out of M1 scope."
+  Infantry_Stormtroopers: "Doctrinal (Terror/Defensive) unit."
+  Vehicle_M4_Crocodile_Sherman: "Flamethrower main weapon: cone flame damage with no accuracy roll and min/max damage ramp does not fit WeaponDef; its only other weapon is a hull MG."
+  Vehicle_M18_Hellcat: "Tales of Valor / doctrinal reward unit, not base-game buildable."
+  Vehicle_T17_Armored_Car: "Tales of Valor reward unit, replaces the M8."
+  Vehicle_M26_Pershing: "Doctrinal (Armor) call-in."
+  Vehicle_Sherman_Calliope: "Doctrinal (Armor) call-in."
+  Vehicle_M2_105mm_Howitzer: "Doctrinal (Defensive) emplacement; off-map/indirect artillery is out of M1 scope."
+  Vehicle_Tiger: "Doctrinal (Terror) call-in."
+  Vehicle_King_Tiger: "Doctrinal call-in."
+  Vehicle_StuH_42: "Doctrinal (Defensive) call-in."
+  Vehicle_Geschutzwagen: "Doctrinal (Blitzkrieg) call-in."
+  Vehicle_150mm_Nebelwerfer_Rocket_Battery: "Doctrinal rocket artillery; out of M1 scope."
+  Vehicle_Wehrmacht_88mm_Flak_36: "Emplacement built by Pioneers; static defences are out of M1 scope."
+  Vehicle_Wehrmacht_Goliath: "Doctrinal remote demolition vehicle."
+  Vehicle_Schwimmwagen_Type_166: "Doctrinal (Blitzkrieg) call-in."
+  Structure_Kampfkraft_Centre: "Not in the M1 Wehrmacht building list; its only products are upgrades/abilities."
+  Structure_Bunker: "Static defence; out of M1 scope."
+  Structure_Medic_Station: "Doctrinal/support structure; out of M1 scope."
+  Structure_Triage_Center: "Doctrinal/support structure; out of M1 scope."
+  Structure_Machine_Gun_Emplacement: "Static defence; out of M1 scope."
+  Structure_Sand_Bags: "Cover object; explicitly out of scope for M1."
+  Structure_Barbed_Wire: "Cover/obstacle object; explicitly out of scope for M1."
+  Structure_Tank_Traps: "Obstacle object; explicitly out of scope for M1."
+  Upgrade_Mk2_Grenades: "Unlocks the Throw Mk2 Grenade activated ability."
+  Upgrade_Sticky_bombs: "Unlocks the Throw Sticky Bomb activated ability."
+  Upgrade_Wehrmacht_MP44: "Applies only to Stormtroopers (doctrinal)."
+  Upgrade_M2_Flamethrower: "Flamethrower weapon model does not fit WeaponDef (see Crocodile)."
+  Upgrade_Flammenwerfer_42: "Flamethrower weapon model does not fit WeaponDef."
+  Upgrade_Flammenwerfers: "Halftrack flamethrower; weapon model does not fit WeaponDef."
+  Upgrade_Minesweeper: "Mines are explicitly out of scope for M1."
+  Upgrade_Frankfurt_42_Mine_Detector: "Mines are explicitly out of scope for M1."
+  Upgrade_Demolitions: "Doctrinal demolition ability."
+  Upgrade_M1A1C_76mm_Gun: "Sherman main-gun swap; vehicle upgrades are not modelled in M1 (SquadUpgradeDef targets squads with member slots)."
+  Upgrade_Quad_: "M3 Halftrack weapon swap; vehicle upgrades are not modelled in M1."
+  Upgrade_Puma_50mm_Gun: "Puma main-gun swap; vehicle upgrades are not modelled in M1."
+  Upgrade_M2HB_: "Vehicle pintle-MG upgrades; vehicle upgrades are not modelled in M1."
+  Upgrade_Armor_Skirts_Greyhound: "Vehicle armour upgrade changes target type; not modelled in M1."
+  Upgrade_Defensive_Smoke_Screen: "Unlocks an activated smoke ability."
+  Upgrade_Crab_Mine_Flail: "Mines are explicitly out of scope for M1."
+  Upgrade_Bulldozer: "Crocodile-only upgrade; the Crocodile is skipped."
+  Upgrade_Walking_Stuka: "Doctrinal halftrack rocket upgrade."
+  Upgrade_Repair_Station: "Support upgrade with no modelled effect in M1."
+  Upgrade_Aid_Station: "Support upgrade with no modelled effect in M1."
+  Upgrade_MG42_Heavy_Machine_Gun_Bunker: "Bunker upgrade; static defences are out of scope."
+  Upgrade_Upgrade_to_Barracks: "Field-HQ conversion of a captured structure; out of M1 scope."
+  Weapon_Mk2_Grenade: "Activated ability weapon."
+  Weapon_Sticky_Bomb: "Activated ability weapon."
+  Weapon_M24_Grenade: "Activated ability weapon."
+  Weapon_M24_Grenade_Assault: "Activated ability weapon."
+  Weapon_Bundled_Grenade: "Activated ability weapon."
+  Weapon_Panzerfaust: "Activated ability weapon (Fire Panzerfaust)."
+  Weapon_60mm_Mortar_Barrage: "Activated barrage ability weapon."
+  Weapon_81mm_Mortar_Barrage: "Activated barrage ability weapon."
+  Weapon_Greyhound_Mine: "Mine-laying ability; mines are out of scope."
+  Weapon_Sherman_Flamethrower: "Flamethrower model does not fit WeaponDef."
+  Weapon_Flammenwerfer_42: "Flamethrower model does not fit WeaponDef."
+  Weapon_Flammenwerfer_Halftrack: "Flamethrower model does not fit WeaponDef."
+  Weapon_M2_Flamethrower: "Flamethrower model does not fit WeaponDef."
+  Weapon_Stuka_Rocket: "Doctrinal halftrack rocket upgrade weapon."
+  Weapon_Quad_50cal: "Weapon of a skipped vehicle upgrade."
+  Weapon_76mm_Sherman: "Weapon of a skipped vehicle upgrade."
+  Weapon_M2HB_Turret_MG: "Weapon of a skipped vehicle upgrade."
+  Weapon_50mm_Puma: "Weapon of a skipped vehicle upgrade."
+  Weapon_Thompson_SMG: "Ranger/doctrinal weapon."
+  Weapon_Bazooka: "Doctrinal (Airborne/Ranger) slot weapon."
+  Weapon_Mine: "Mines are explicitly out of scope for M1."
+  Veterancy_all: "Veterancy is explicitly out of scope for M1; every unit page's veterancy table is ignored."
+  Ability_all: "Activated and doctrinal abilities are explicitly out of scope for M1."
