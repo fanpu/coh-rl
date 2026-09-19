@@ -254,8 +254,19 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
 
 
 def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import territory
+
     if order.point_id not in sim.map.points:  # type: ignore[attr-defined]
         return OrderResult(False, f"no such point {order.point_id!r}")  # type: ignore[attr-defined]
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    if sdef.capture_rate <= 0:
+        return OrderResult(False, f"squad {squad.id} cannot capture (capture_rate 0)")
+    if territory.is_hq_point(sim, order.point_id):  # type: ignore[attr-defined]
+        return OrderResult(False, f"point {order.point_id!r} is an HQ sector point and cannot be captured")  # type: ignore[attr-defined]
+    point = sim.state.points[order.point_id]  # type: ignore[attr-defined]
+    if point.owner_team == player.team and point.progress >= 1.0:
+        return OrderResult(False, f"point {order.point_id!r} is already fully owned by team {player.team}")  # type: ignore[attr-defined]
     return OK
 
 
