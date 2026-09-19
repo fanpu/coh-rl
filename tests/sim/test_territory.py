@@ -117,7 +117,16 @@ def test_progress_decays_to_resting_value_without_capturers():
 # ---------------------------------------------------------------------------
 
 
-def test_pinned_squad_does_not_capture():
+def test_pinned_squad_does_not_capture(monkeypatch):
+    # The suppression system (task 9) would otherwise decay a bare `pinned`
+    # flag with no backing `squad.suppression` value straight back off well
+    # before `CAPTURE_TICKS` elapses; this test only cares about capture
+    # eligibility reading the flag, so it is stubbed out (as `no_combat`
+    # does for combat elsewhere).
+    from coh.sim.systems import suppression
+
+    monkeypatch.setattr(suppression, "run", lambda sim: None)
+
     sim = make_sim()
     squad = spawn(sim, 0, "rifles", (20, 15))
     squad.pinned = True

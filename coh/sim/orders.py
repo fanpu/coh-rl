@@ -18,17 +18,22 @@ function:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any, Callable, get_origin, get_type_hints
 
-from coh.maps.format import cell_of
+import numpy as np
+
+from coh.data.schema import Cost
+from coh.maps.format import cell_of, center_of
 from coh.sim import pathfinding
-from coh.sim.constants import MAX_QUEUE_LEN
+from coh.sim.constants import CELL_M, MAX_QUEUE_LEN, TICKS_PER_SECOND
 from coh.sim.state import SquadState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from coh.data.schema import SquadDef
     from coh.sim.sim import Sim
-    from coh.sim.state import Player, Squad
+    from coh.sim.state import Building, Player, Squad
 
 
 @dataclass(frozen=True)
@@ -236,10 +241,42 @@ def apply_attack_move(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, order.cell, SquadState.MOVING)  # type: ignore[attr-defined]
 
 
+def validate_retreat(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    """Vehicles and abandoned squads cannot retreat; everything else can
+    (including garrisoned squads and team weapons -- `apply_retreat` handles
+    both specially)."""
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    if sdef.kind == "vehicle":
+        return OrderResult(False, f"squad {squad.id} is a vehicle and cannot retreat")
+    if squad.abandoned:
+        return OrderResult(False, f"squad {squad.id} is abandoned and cannot retreat")
+    return OK
+
+
 def apply_retreat(sim: "Sim", order: Order) -> None:
+    """Clear suppression and any target/pursuit state, exit a garrison if
+    the squad is in one (task 12 owns garrison entry/exit proper; this just
+    unblocks retreat), then path to the nearest cell adjacent to own HQ.
+
+    Team weapons tear down instantly on retreat (no teardown delay) --
+    `movement.start_path` special-cases `moving_state is RETREATING` for
+    that.
+    """
     from coh.sim.systems import movement
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+
+    squad.suppression = 0.0
+    squad.suppressed = False
+    squad.pinned = False
+    squad.target_id = None
+    squad.attack_last_seen_tick = -1
+    squad.attack_last_repath_tick = -1
+
+    if squad.garrison_in is not None:
+        _exit_garrison_for_retreat(sim, squad)
+
     player = sim.state.players[squad.owner]
     hq = sim.state.buildings[player.hq_id]
     bdef = sim.data.buildings[hq.def_id]
@@ -248,6 +285,19 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
     if goal_cell is None:
         goal_cell = hq.cell
     movement.start_path(sim, squad, order, goal_cell, SquadState.RETREATING)
+
+
+def _exit_garrison_for_retreat(sim: "Sim", squad: "Squad") -> None:
+    building = sim.state.buildings.get(squad.garrison_in)  # type: ignore[arg-type]
+    squad.garrison_in = None
+    if building is None:
+        return
+    bdef = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
+    footprint = bdef.footprint if bdef is not None else (1, 1)
+    start_cell = cell_of(squad.pos)
+    exit_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), building.cell, footprint, start_cell)
+    if exit_cell is not None:
+        squad.pos = np.asarray(center_of(exit_cell, CELL_M), dtype=float)
 
 
 def validate_attack(sim: "Sim", player: "Player", order: Order) -> OrderResult:
@@ -501,6 +551,97 @@ def apply_buy_upgrade(sim: "Sim", order: Order) -> None:
     production.start_squad_upgrade(sim, squad, sim.data.squad_upgrades[order.upgrade])  # type: ignore[attr-defined]
 
 
+# -- reinforce (task 9): one model at a time, near a friendly building --------
+#
+# `reinforce_building` / `reinforce_model_cost` / `reinforce_model_time_s` are
+# public (no leading underscore) because `coh/sim/systems/suppression.py`
+# reuses them each tick to decide whether an in-progress `Reinforce` should
+# keep going, stop for lack of range/funds, or complete its current model.
+
+
+def reinforce_building(sim: "Sim", squad: "Squad") -> "Building | None":
+    """The nearest complete building, owned by a player on `squad`'s team,
+    with `reinforce_radius > 0` and within range of `squad` -- or `None`."""
+    team = sim.state.players[squad.owner].team
+    best: "Building | None" = None
+    best_dist = math.inf
+    for building_id in sorted(sim.state.buildings):
+        building = sim.state.buildings[building_id]
+        if building.owner is None or building.progress < 1.0:
+            continue
+        owner = sim.state.players.get(building.owner)
+        if owner is None or owner.team != team:
+            continue
+        bdef = sim.data.buildings.get(building.def_id)
+        if bdef is None or bdef.reinforce_radius <= 0.0:
+            continue
+        dist = _building_distance_m(building, bdef, squad.pos)
+        if dist > bdef.reinforce_radius:
+            continue
+        if dist < best_dist:
+            best, best_dist = building, dist
+    return best
+
+
+def _building_distance_m(building: "Building", bdef, pos: np.ndarray) -> float:
+    """Distance in metres from `pos` to the nearest edge of `building`'s footprint."""
+    cx0, cy0 = building.cell
+    w, h = bdef.footprint
+    x, y = pos[0] / CELL_M, pos[1] / CELL_M
+    dx = max(cx0 - x, 0.0, x - (cx0 + w))
+    dy = max(cy0 - y, 0.0, y - (cy0 + h))
+    return math.hypot(dx, dy) * CELL_M
+
+
+def reinforce_model_cost(sim: "Sim", sdef: "SquadDef") -> Cost:
+    """Per-model reinforce cost: `squad.cost / members * reinforce_base_cost_frac
+    * squad.reinforce_cost_mult`, applied to each resource."""
+    frac = sim.data.economy.reinforce_base_cost_frac * sdef.reinforce_cost_mult / sdef.members
+    cost = sdef.cost
+    return Cost(manpower=cost.manpower * frac, munitions=cost.munitions * frac, fuel=cost.fuel * frac)
+
+
+def reinforce_model_time_s(sdef: "SquadDef") -> float:
+    return sdef.build_time / sdef.members * sdef.reinforce_time_mult
+
+
+def validate_reinforce(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import production
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+
+    if sdef.kind == "vehicle":
+        return OrderResult(False, f"squad {squad.id} is a vehicle and cannot reinforce")
+    if squad.abandoned:
+        return OrderResult(False, f"squad {squad.id} is abandoned and cannot reinforce")
+    if squad.garrison_in is not None:
+        return OrderResult(False, f"squad {squad.id} is garrisoned and cannot reinforce")
+    if len(squad.members) >= sdef.members:
+        return OrderResult(False, f"squad {squad.id} is already at full strength")
+    if reinforce_building(sim, squad) is None:
+        return OrderResult(False, f"squad {squad.id} is not within reinforce range of a friendly building")
+    if not production.can_afford(player, reinforce_model_cost(sim, sdef)):
+        return OrderResult(False, f"player {player.id} cannot afford to reinforce squad {squad.id}")
+    return OK
+
+
+def apply_reinforce(sim: "Sim", order: Order) -> None:
+    """Pay for and start timing the first model; `suppression.run` finishes
+    it (and any further models the order implies) on later ticks."""
+    from coh.sim.systems import production
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    player = sim.state.players[squad.owner]
+
+    squad.order = order
+    production.pay(player, reinforce_model_cost(sim, sdef))
+    squad.reinforcing = True
+    seconds = reinforce_model_time_s(sdef)
+    squad.reinforce_done_tick = sim.state.tick + max(1, math.ceil(seconds * TICKS_PER_SECOND))
+
+
 @dataclass(frozen=True)
 class OrderHandler:
     validate: Callable[["Sim", "Player", Order], OrderResult]
@@ -517,8 +658,8 @@ ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
     Capture: OrderHandler(validate_capture, apply_capture),
     Garrison: OrderHandler(validate_garrison, apply_garrison),
     Ungarrison: OrderHandler(_accept, apply_squad_order),
-    Retreat: OrderHandler(_accept, apply_retreat),
-    Reinforce: OrderHandler(_accept, apply_squad_order),
+    Retreat: OrderHandler(validate_retreat, apply_retreat),
+    Reinforce: OrderHandler(validate_reinforce, apply_reinforce),
     SetFacing: OrderHandler(_accept, apply_squad_order),
     Build: OrderHandler(validate_build, apply_build),
     Train: OrderHandler(validate_train, apply_train),

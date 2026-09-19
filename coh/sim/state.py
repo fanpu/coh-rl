@@ -76,6 +76,7 @@ class Squad:
     garrison_in: int | None = None
     facing: float | None = None  # team-weapon arc centre, radians
     setup_done_tick: int = 0
+    reinforcing: bool = False  # a `Reinforce` order is actively restoring members
     reinforce_done_tick: int = 0
     upgrades: list[str] = field(default_factory=list)
     build_target: int | None = None  # building id this squad is constructing (task 14)
@@ -215,6 +216,7 @@ def _squad(s: Squad) -> dict[str, Any]:
         "garrison_in": s.garrison_in,
         "facing": None if s.facing is None else _r(s.facing),
         "setup_done_tick": s.setup_done_tick,
+        "reinforcing": s.reinforcing,
         "reinforce_done_tick": s.reinforce_done_tick,
         "upgrades": list(s.upgrades),
         "build_target": s.build_target,
