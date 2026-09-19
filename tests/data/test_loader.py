@@ -38,6 +38,7 @@ def test_loads_fixtures():
         "hull_gun",
         "at_gun_duel",
         "duel_tank_gun",
+        "garrison_rifle",
     }
     assert set(data.squads) == {
         "rifles",
@@ -50,6 +51,7 @@ def test_loads_fixtures():
         "assault_gun",
         "at_team_duel",
         "duel_tank",
+        "garrison_rifles",
     }
     assert set(data.buildings) == {
         "hq_us",

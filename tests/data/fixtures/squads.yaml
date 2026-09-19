@@ -238,3 +238,29 @@ squads:
     retreat_received_accuracy: 0.5
     upgrade_slots: 0
     can_garrison: true
+
+  # Task 12 fixture: `rifles` armed with `garrison_rifle` (see weapons.yaml),
+  # so that the garrison duel in `tests/sim/test_garrison.py` is fought
+  # squad-vs-squad instead of both sides plinking at the house.
+  garrison_rifles:
+    faction: us
+    kind: infantry
+    members: 4
+    member_hp: 80
+    loadout: [garrison_rifle, garrison_rifle, garrison_rifle, garrison_rifle]
+    target_type: infantry
+    cost: {manpower: 240}
+    population: 5
+    build_time: 20
+    upkeep_per_min: 3
+    speed: 3.0
+    rotation_deg_s: 180
+    sight: 25
+    capture_rate: 1.0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 1
+    can_garrison: true

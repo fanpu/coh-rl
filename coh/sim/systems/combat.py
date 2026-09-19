@@ -31,8 +31,14 @@ for it (`SetFacing`) or acquisition decided the fight had moved (
 
 Task 9's `add_suppression` spills part of every bullet's suppression to squads
 near the victim (`_spill_suppression`), while `coh/sim/systems/suppression.py`
-owns the slower per-tick decay and `suppressed`/`pinned` thresholds; task 12
-fills in `on_building_destroyed`.
+owns the slower per-tick decay and `suppressed`/`pinned` thresholds.
+
+Task 12's garrisons touch combat at four seams: `_building_team` makes an
+*occupied* neutral building a target (and `_garrison_choice` decides between
+the house and the men inside it), `garrison.los_ignore` lets both ends of a
+line of fire see through the walls they are standing behind, `fire_member`
+swaps a garrisoned team weapon's firing arc for a re-setup timer, and
+`on_building_destroyed` hands the collapse to `systems/garrison.py`.
 
 Task 11's vehicle rules — the penetration roll behind `apply_hit`'s vehicle
 branch, the turret/hull arc gate in `fire_member`, and the wreck a destroyed
@@ -71,7 +77,7 @@ from coh.sim.constants import (
     TICKS_PER_SECOND,
 )
 from coh.sim.state import Building, Event, Squad, SquadState
-from coh.sim.systems import vehicle_combat, vision
+from coh.sim.systems import garrison, vehicle_combat, vision
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
@@ -81,6 +87,8 @@ __all__ = [
     "run",
     "acquire_target",
     "apply_hit",
+    "damage_member",
+    "halt",
     "on_building_destroyed",
     "abandoned_weapon_near",
     "can_recrew",
@@ -142,10 +150,11 @@ def _snapshot(sim: "Sim") -> _Snapshot:
     building_team: list[int] = []
     for bid in sorted(sim.state.buildings):
         building = sim.state.buildings[bid]
-        if building.neutral:
-            continue  # never auto-targeted (and never Attack-able in task 8)
+        team = _building_team(sim, building)
+        if team == _NO_TEAM:
+            continue  # unowned and unoccupied: never a target
         building_ids.append(bid)
-        building_team.append(_team_of(sim, building.owner))
+        building_team.append(team)
 
     return _Snapshot(
         squad_ids=np.array(ids, dtype=np.int64),
@@ -154,6 +163,19 @@ def _snapshot(sim: "Sim") -> _Snapshot:
         building_ids=tuple(building_ids),
         building_team=tuple(building_team),
     )
+
+
+def _building_team(sim: "Sim", building: Building) -> int:
+    """Whose building this is for targeting purposes.
+
+    An *occupied* neutral building belongs to the team hiding inside it: a
+    house full of riflemen is a legitimate thing to shell, while an empty one
+    is map furniture (task 12).
+    """
+    if building.neutral:
+        team = garrison.occupying_team(sim, building)
+        return _NO_TEAM if team is None else team
+    return _team_of(sim, building.owner)
 
 
 def _is_targetable(squad: Squad) -> bool:
@@ -337,7 +359,14 @@ def _arc_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
 
 
 def _indirect_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
-    """The team weapon, if it lobs its shells over the terrain (mortars)."""
+    """The team weapon, if it lobs its shells over the terrain (mortars).
+
+    None for a garrisoned crew: a mortar cannot be dropped through a roof, so
+    the tube never fires from inside (task 12) and the squad neither gains
+    indirect fire's LOS exemption nor its minimum range.
+    """
+    if squad.garrison_in is not None:
+        return None
     weapon = _team_weapon(sim, squad)
     return weapon if weapon is not None and weapon.indirect else None
 
@@ -382,6 +411,10 @@ def set_facing(sim: "Sim", squad: Squad, direction: float, *, auto: bool) -> Non
     squad.path = []
     if not auto:
         squad.reface_hold_tick = 0
+    if squad.garrison_in is not None:
+        # A gun in a building covers every window: the bearing is recorded
+        # but there is no arc to swing and nothing to tear down (task 12).
+        return
     if ticks <= 0:  # a "team weapon" with no setup time simply pivots
         return
     squad.state = SquadState.TEARING_DOWN
@@ -467,9 +500,10 @@ def _is_engageable(sim: "Sim", squad: Squad, team: int, target: _Target, reach: 
     An indirect weapon drops the LOS requirement -- a mortar shells anything
     its *team* can see -- and gains a minimum range in exchange.
     """
-    if _team_of(sim, target.entity.owner) == team:
-        return False
-    if isinstance(target.entity, Building) and target.entity.neutral:
+    if isinstance(target.entity, Building):
+        if _building_team(sim, target.entity) in (team, _NO_TEAM):
+            return False  # friendly, or an empty neutral house: not a target
+    elif _team_of(sim, target.entity.owner) == team:
         return False
     if target.distance > reach:
         return False
@@ -478,7 +512,7 @@ def _is_engageable(sim: "Sim", squad: Squad, team: int, target: _Target, reach: 
     indirect = _indirect_weapon(sim, squad)
     if indirect is not None:
         return target.distance >= indirect.min_range
-    return vision.has_los(sim.map, squad.pos, target.aim_pos)
+    return vision.has_los(sim.map, squad.pos, target.aim_pos, garrison.los_ignore(sim, squad, target.entity))
 
 
 def _choose_target(
@@ -509,10 +543,52 @@ def _choose_target(
         mods = primary.vs(target.target_type)
         if isinstance(entity, Building) and mods.damage < BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT:
             continue
+        if not _garrison_choice(sim, primary, entity):
+            continue
         key = (-mods.priority, target.distance, target.id)
         if best_key is None or key < best_key:
             best, best_key = target, key
     return best
+
+
+def _garrison_choice(sim: "Sim", weapon: WeaponDef, entity: Squad | Building) -> bool:
+    """Should `weapon` *auto*-acquire this end of a garrison at all?
+
+    An occupied house and the squad inside it sit on the same spot, so one of
+    the two has to be dropped: a weapon goes for the building when it hurts
+    the building at least as much as it hurts the occupants (and can hurt it
+    at all), and for the squad otherwise. An explicit `Attack` order bypasses
+    this — it never goes through `_choose_target`.
+    """
+    if isinstance(entity, Building):
+        if not entity.neutral:
+            return True  # a player's building is a target in its own right
+        return _prefers_building(sim, weapon, entity)
+    if entity.garrison_in is None:
+        return True
+    building = sim.state.buildings.get(entity.garrison_in)
+    return building is None or not _prefers_building(sim, weapon, building)
+
+
+def _prefers_building(sim: "Sim", weapon: WeaponDef, building: Building) -> bool:
+    """Would `weapon` rather knock the house down than shoot the men in it?
+
+    Compared against the lowest-id occupant's target type, so the answer is
+    the same whichever end of the pair `_garrison_choice` is asked about.
+    """
+    inside = garrison.occupants(sim, building)
+    if not inside:
+        return False
+    target_type = _building_target_type(sim, building)
+    if target_type is None:
+        return False
+    vs_building = weapon.vs(target_type).damage
+    if vs_building < BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT:
+        return False
+    sdef = sim.data.squads.get(inside[0].def_id)
+    if sdef is None:
+        return True
+    return vs_building >= weapon.vs(sdef.target_type).damage
 
 
 def _candidates(
@@ -542,7 +618,7 @@ def _candidates(
 # -- Attack order -----------------------------------------------------------
 
 
-def _halt(sim: "Sim", squad: Squad) -> None:
+def halt(sim: "Sim", squad: Squad) -> None:
     """Stop walking, the way movement's arrival does.
 
     A team weapon that stops deploys again, so that it can actually fire the
@@ -579,7 +655,7 @@ def _clear_attack_order(sim: "Sim", squad: Squad) -> None:
     squad.target_id = None
     squad.attack_last_seen_tick = -1
     squad.attack_last_repath_tick = -1
-    _halt(sim, squad)
+    halt(sim, squad)
 
 
 def _pursue_attack_order(
@@ -608,13 +684,15 @@ def _pursue_attack_order(
         squad.target_id = target.id
         # Unconditionally: a squad that was MOVING when the order arrived has
         # no path left to clear but still has to settle out of MOVING (and a
-        # team weapon has to redeploy) before it can fire. `_halt` is a no-op
+        # team weapon has to redeploy) before it can fire. `halt` is a no-op
         # for a squad that is already stopped, so a SET_UP team weapon given
         # an in-range Attack never needlessly tears down.
-        _halt(sim, squad)
+        halt(sim, squad)
         return
 
     squad.target_id = None
+    if squad.garrison_in is not None:
+        return  # a garrisoned squad holds the building; it never walks out
     _repath_toward(sim, squad, order, entity)
 
 
@@ -665,10 +743,17 @@ def fire_member(sim: "Sim", squad: Squad, sdef, slot: int, member: "Member", wea
     if sdef.kind == "team_weapon" and slot == 0:
         # The crewed weapon fires only deployed, and only inside its arc; the
         # crew's own small arms (later slots) are not arc-limited.
-        if squad.state is not SquadState.SET_UP:
-            return
-        if not _in_arc(squad, weapon, target.aim_pos):
-            return
+        if squad.garrison_in is not None:
+            # Inside a building the gun still has to be set up after moving
+            # in, but it covers every window: no arc, and no lobbing mortar
+            # bombs through the roof (task 12).
+            if sim.state.tick < squad.setup_done_tick or weapon.indirect:
+                return
+        else:
+            if squad.state is not SquadState.SET_UP:
+                return
+            if not _in_arc(squad, weapon, target.aim_pos):
+                return
     if not vehicle_combat.may_fire(squad, sdef, slot, weapon, target.aim_pos):
         return  # a vehicle's main gun is still traversing onto the target
     if target.distance > weapon.ranges[2] or target.distance < weapon.min_range:
@@ -683,7 +768,9 @@ def fire_member(sim: "Sim", squad: Squad, sdef, slot: int, member: "Member", wea
     band = _range_band(weapon, target.distance)
     if weapon.indirect:
         hit_any = fire_shell(sim, squad, weapon, band, target)
-    elif _indirect_weapon(sim, squad) is not None and not vision.has_los(sim.map, squad.pos, target.aim_pos):
+    elif _indirect_weapon(sim, squad) is not None and not vision.has_los(
+        sim.map, squad.pos, target.aim_pos, garrison.los_ignore(sim, squad, target.entity)
+    ):
         # Acquisition dropped the LOS test for this squad's tube; the crew's
         # own small arms still cannot shoot through the hedgerow.
         return
@@ -832,7 +919,7 @@ def _explode(sim: "Sim", attacker: Squad, weapon: WeaponDef, band: int, impact: 
         hurt = _explode_on_squad(sim, attacker, weapon, band, impact, victim) or hurt
     for bid in sorted(sim.state.buildings):
         building = sim.state.buildings.get(bid)
-        if building is None or building.neutral or _team_of(sim, building.owner) in (team, _NO_TEAM):
+        if building is None or _building_team(sim, building) in (team, _NO_TEAM):
             continue
         hurt = _explode_on_building(sim, weapon, impact, building) or hurt
     return hurt
@@ -1042,6 +1129,17 @@ def apply_hit(
         _remove_member(sim, victim_squad, victim)
 
 
+def damage_member(sim: "Sim", squad: Squad, member: "Member", amount: float) -> None:
+    """Hurt one model directly, retiring it (and its squad) if it dies.
+
+    The raw damage path behind `apply_hit`, exposed for damage that isn't a
+    bullet: task 12's garrison collapse.
+    """
+    member.hp -= amount
+    if member.hp <= 0.0:
+        _remove_member(sim, squad, member)
+
+
 def _remove_member(sim: "Sim", squad: Squad, member: "Member") -> None:
     """A dead model leaves the squad, taking its weapon with it.
 
@@ -1100,6 +1198,7 @@ def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
     squad.reinforcing = False
     squad.recrew_target = None
     squad.reface_hold_tick = 0
+    garrison.detach(sim, squad)
     _forget_target(sim, squad.id)
     sim.state.events.append(
         Event(
@@ -1197,6 +1296,7 @@ def _destroy_squad(sim: "Sim", squad: Squad) -> None:
     if vehicle_combat.is_vehicle(sim, squad):
         vehicle_combat.leave_wreck(sim, squad)
         kind = vehicle_combat.VEHICLE_DESTROYED
+    garrison.detach(sim, squad)
     sim.state.squads.pop(squad.id, None)
     _forget_target(sim, squad.id)
     sim.state.events.append(
@@ -1226,11 +1326,13 @@ def _destroy_building(sim: "Sim", building: Building) -> None:
 
 
 def on_building_destroyed(sim: "Sim", building: Building) -> None:
-    """Hook for task 12: eject the garrison (with collapse damage).
+    """Eject the garrison (with collapse damage) and clear up after the wreck.
 
     Called after the building leaves `state.buildings` and its footprint is
-    freed, before the `building_destroyed` event is emitted.
+    freed, before the `building_destroyed` event is emitted. The rules live in
+    `systems/garrison.py`.
     """
+    garrison.on_building_destroyed(sim, building)
 
 
 def _forget_target(sim: "Sim", entity_id: int) -> None:

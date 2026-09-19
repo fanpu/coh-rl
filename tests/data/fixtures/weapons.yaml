@@ -189,3 +189,32 @@ weapons:
     target_table:
       armour_tank:
         damage: 0.01
+
+  # Task 12 fixture: a rifle that can barely scratch a building. The plain
+  # `rifle` above has no `building_light` row, so it falls back to a damage
+  # multiplier of 1.0 and would rather shoot the house than the squad inside
+  # it; this one lets `tests/sim/test_garrison.py` stage a squad-vs-squad
+  # garrison duel. Identical to `rifle` in every other respect.
+  garrison_rifle:
+    damage: 20
+    ranges: [10, 20, 30]
+    min_range: 0
+    accuracy: [1.0, 0.5, 0.25]
+    penetration: [1.0, 1.0, 1.0]
+    suppression: [0.05, 0.04, 0.03]
+    cooldown: [1.0, 2.0]
+    cooldown_range_mult: [1.0, 1.0, 1.0]
+    burst: null
+    rate_of_fire: 1.0
+    reload: [0.0, 0.0]
+    reload_every: 1000
+    moving_accuracy: 0.5
+    target_table:
+      armour_tank: {damage: 0.01}
+      building_light: {damage: 0.05}
+      building_heavy: {damage: 0.05}
+    cover_table:
+      heavy: {accuracy: 0.5, damage: 0.5, suppression: 0.1}
+      light: {accuracy: 0.5, damage: 1.0, suppression: 0.5}
+      negative: {accuracy: 1.25, damage: 1.25, suppression: 1.5}
+      garrison: {accuracy: 0.4, damage: 0.75, suppression: 0.0}

@@ -82,6 +82,13 @@ BUILD_RANGE_CELLS = 1.5
 # Maximum number of queued train/research items per building.
 MAX_QUEUE_LEN = 5
 
+# --- garrisons (coh/sim/systems/garrison.py, task 12) ----------------------
+
+# How close (in cells, to the nearest footprint edge) a squad walking to a
+# `Garrison` order's building must get before it steps inside. A reach
+# tolerance like `BUILD_RANGE_CELLS`, not a balance knob.
+GARRISON_ENTER_RANGE_CELLS = 1.5
+
 # --- vehicles (coh/sim/systems/vehicle_combat.py, task 11) -----------------
 
 # A hit counts as a rear hit when the angle between the target vehicle's

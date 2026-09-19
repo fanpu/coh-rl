@@ -351,14 +351,20 @@ def test_capture_with_unknown_point_is_rejected():
     assert squad.order is None
 
 
-def test_garrison_walks_adjacent_to_the_building_and_keeps_its_order():
-    sim = make_sim()
-    hq = sim.state.buildings[sim.state.players[0].hq_id]
+def test_garrison_walks_adjacent_to_the_building_and_keeps_its_order(monkeypatch):
+    """Movement's job stops at the doorstep: the order survives arrival, and
+    `systems/garrison.py` is what actually takes the squad inside (task 12).
+    Only neutral buildings are enterable, so the target is a house."""
+    from coh.sim.systems import garrison
+
+    sim = make_sim(neutral_buildings=[{"def": "house", "cell": [18, 8]}])
+    house = next(b for b in sim.state.buildings.values() if b.neutral)
     squad = spawn(sim, 0, "rifles", (10, 10))
-    order = Garrison(squad=squad.id, building_id=hq.id)
+    order = Garrison(squad=squad.id, building_id=house.id)
     (result,) = sim.issue(0, [order])
     assert result.ok
 
+    monkeypatch.setattr(garrison, "run", lambda sim: None)  # isolate movement
     sim.run(100)
 
     assert squad.state is SquadState.IDLE

@@ -471,11 +471,13 @@ def test_a_tank_fight_is_reproducible_from_the_seed() -> None:
 
 
 def test_infantry_can_still_be_ordered_to_garrison() -> None:
+    """`can_garrison` is false for vehicles and true for infantry; which
+    buildings are enterable at all is task 12's rule (neutral ones)."""
     sim = veh_sim()
+    house = sim.spawn_building(None, "house", (20, 2))
     rifles = spawn(sim, 0, "rifles", TARGET_CELL)
-    hq = sim.state.buildings[sim.state.players[0].hq_id]
 
-    assert sim.issue(0, [Garrison(squad=rifles.id, building_id=hq.id)])[0].ok
+    assert sim.issue(0, [Garrison(squad=rifles.id, building_id=house.id)])[0].ok
 
 
 # ---------------------------------------------------------------------------

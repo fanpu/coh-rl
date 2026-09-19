@@ -38,7 +38,7 @@ from coh.sim.state import Building, Ghost, Squad
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
 
-__all__ = ["run", "is_visible", "has_los"]
+__all__ = ["run", "is_visible", "has_los", "building_center_cell"]
 
 
 # ---------------------------------------------------------------------------
@@ -69,18 +69,22 @@ def _bresenham(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
     return points
 
 
-def has_los(m: GameMap, a_pos, b_pos) -> bool:
+def has_los(m: GameMap, a_pos, b_pos, ignore: frozenset[tuple[int, int]] = frozenset()) -> bool:
     """True if no `los_block` cell lies strictly between `a_pos` and `b_pos`
     (world meters; both endpoints excluded) on the Bresenham line `a -> b`.
 
     Uses the same `_bresenham` routine, in the same direction, as the mask
-    computation below, so the two agree by construction.
+    computation below, so the two agree by construction. `ignore` is the
+    line-of-sight equivalent of `_mask_for`'s `ignore_block`: cells that are
+    there but must not block, namely the footprint of a building one of the
+    two ends is garrisoned in (task 12) — a squad is not blind past its own
+    walls, and is not safe behind them either.
     """
     ax, ay = cell_of(np.asarray(a_pos), CELL_M)
     bx, by = cell_of(np.asarray(b_pos), CELL_M)
     line = _bresenham(ax, ay, bx, by)
     for cx, cy in line[1:-1]:
-        if m.los_block[cy, cx]:
+        if m.los_block[cy, cx] and (cx, cy) not in ignore:
             return False
     return True
 
@@ -235,7 +239,7 @@ def _footprint(sim: "Sim", def_id: str) -> tuple[int, int]:
     return (1, 1)
 
 
-def _building_center_cell(sim: "Sim", cell: tuple[int, int], def_id: str) -> tuple[int, int]:
+def building_center_cell(sim: "Sim", cell: tuple[int, int], def_id: str) -> tuple[int, int]:
     w, h = _footprint(sim, def_id)
     cx0, cy0 = cell
     return (cx0 + w // 2, cy0 + h // 2)
@@ -363,7 +367,7 @@ def run(sim: "Sim") -> None:
             building = sim.state.buildings.get(squad.garrison_in)
             if building is None:
                 continue
-            origin = _building_center_cell(sim, building.cell, building.def_id)
+            origin = building_center_cell(sim, building.cell, building.def_id)
             ignore_block = _footprint_cells(sim, building.cell, building.def_id)
         else:
             origin = cell_of(squad.pos, CELL_M)
@@ -381,7 +385,7 @@ def run(sim: "Sim") -> None:
         if bdef is None:
             continue
         radius_cells = _radius_cells(bdef.sight)
-        origin = _building_center_cell(sim, building.cell, building.def_id)
+        origin = building_center_cell(sim, building.cell, building.def_id)
         ignore_block = _footprint_cells(sim, building.cell, building.def_id)
         grids[owner.team] |= _mask_for(sim, origin, radius_cells, ignore_block)
 

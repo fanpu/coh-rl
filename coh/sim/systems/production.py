@@ -314,6 +314,19 @@ def _complete_building(sim: "Sim", site: "Building", builders: list["Squad"]) ->
     )
 
 
+def release_builders_of(sim: "Sim", building_id: int) -> None:
+    """Detach every squad building `building_id` — it just died (task 12).
+
+    A construction site that is destroyed takes its builders' `Build` orders
+    with it; they go idle where they stand rather than keep hammering at a
+    crater.
+    """
+    for squad_id in sorted(sim.state.squads):
+        squad = sim.state.squads[squad_id]
+        if squad.build_target == building_id:
+            _release_builder(squad)
+
+
 def _release_builder(squad: "Squad") -> None:
     """Detach a squad from its construction site, clearing a spent `Build` order."""
     squad.build_target = None

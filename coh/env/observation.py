@@ -176,8 +176,12 @@ def _squad_cover(sim: "Sim", squad: Squad, threat_pos: np.ndarray | None) -> str
 
     With no known enemy to take cover *from*, the shooter position is the
     squad's own cell centre, which reduces `cover_at` to the cell's
-    non-directional area/road cover.
+    non-directional area/road cover. A garrisoned squad reports `"garrison"`
+    whatever the cell under the building says, matching what combat actually
+    resolves shots against (`combat._cover_for`).
     """
+    if squad.garrison_in is not None:
+        return "garrison"
     cell = cell_of(squad.pos, CELL_M)
     from_pos = center_of(cell, CELL_M) if threat_pos is None else threat_pos
     return cover_at(sim.map, cell, from_pos)

@@ -227,6 +227,25 @@ def _passable(sim: "Sim", squad: "Squad") -> Any:
     return sim.map.pass_veh if sdef.kind == "vehicle" else sim.map.pass_inf
 
 
+def _garrisoned(sim: "Sim", order: Order) -> OrderResult:
+    """Reject an order that a garrisoned squad would have to walk out to obey.
+
+    Task 12's ruling: `Move`, `AttackMove`, `Capture`, `Build`, `Reinforce`
+    and a second `Garrison` all require an explicit `Ungarrison` first. Only
+    `Retreat` exits by itself.
+    """
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    if squad.garrison_in is not None:
+        return OrderResult(False, f"squad {squad.id} is garrisoned; ungarrison first")
+    return OK
+
+
+def validate_walk(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    """`Move` / `AttackMove`: any cell is fair game, as long as the squad is
+    standing on the map rather than inside a building."""
+    return _garrisoned(sim, order)
+
+
 def apply_move(sim: "Sim", order: Order) -> None:
     """Walk to the cell -- and remember it if there is an abandoned team
     weapon there, so that arriving re-crews it (task 10)."""
@@ -261,14 +280,13 @@ def validate_retreat(sim: "Sim", player: "Player", order: Order) -> OrderResult:
 
 def apply_retreat(sim: "Sim", order: Order) -> None:
     """Clear suppression and any target/pursuit state, exit a garrison if
-    the squad is in one (task 12 owns garrison entry/exit proper; this just
-    unblocks retreat), then path to the nearest cell adjacent to own HQ.
+    the squad is in one, then path to the nearest cell adjacent to own HQ.
 
     Team weapons tear down instantly on retreat (no teardown delay) --
     `movement.start_path` special-cases `moving_state is RETREATING` for
     that.
     """
-    from coh.sim.systems import movement
+    from coh.sim.systems import garrison, movement
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
 
@@ -280,7 +298,8 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
     squad.attack_last_repath_tick = -1
 
     if squad.garrison_in is not None:
-        _exit_garrison_for_retreat(sim, squad)
+        # `settle=False`: `start_path` below puts the squad in RETREATING.
+        garrison.leave(sim, squad, settle=False)
 
     player = sim.state.players[squad.owner]
     hq = sim.state.buildings[player.hq_id]
@@ -292,25 +311,13 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, goal_cell, SquadState.RETREATING)
 
 
-def _exit_garrison_for_retreat(sim: "Sim", squad: "Squad") -> None:
-    building = sim.state.buildings.get(squad.garrison_in)  # type: ignore[arg-type]
-    squad.garrison_in = None
-    if building is None:
-        return
-    bdef = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
-    footprint = bdef.footprint if bdef is not None else (1, 1)
-    start_cell = cell_of(squad.pos)
-    exit_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), building.cell, footprint, start_cell)
-    if exit_cell is not None:
-        squad.pos = np.asarray(center_of(exit_cell, CELL_M), dtype=float)
-
-
 def validate_attack(sim: "Sim", player: "Player", order: Order) -> OrderResult:
     """The target must exist, be an enemy squad/building, and be visible now.
 
-    Neutral (enterable) buildings are not attackable in M1.
+    A neutral (enterable) building is only attackable while enemies are
+    hiding in it (task 12); an empty one is map furniture.
     """
-    from coh.sim.systems import vision
+    from coh.sim.systems import garrison, vision
 
     target_id = order.target_id  # type: ignore[attr-defined]
     entity = sim.state.squads.get(target_id) or sim.state.buildings.get(target_id)
@@ -319,7 +326,14 @@ def validate_attack(sim: "Sim", player: "Player", order: Order) -> OrderResult:
 
     building = sim.state.buildings.get(target_id)
     if building is not None and building.neutral:
-        return OrderResult(False, f"building {target_id} is neutral and cannot be attacked")
+        holder = garrison.occupying_team(sim, building)
+        if holder is None:
+            return OrderResult(False, f"building {target_id} is empty and cannot be attacked")
+        if holder == player.team:
+            return OrderResult(False, f"building {target_id} is held by player {player.id}'s own team")
+        if not vision.is_visible(sim, player.team, building):
+            return OrderResult(False, f"target {target_id} is not visible to team {player.team}")
+        return OK
 
     owner = sim.state.players.get(entity.owner) if entity.owner is not None else None
     if owner is not None and owner.team == player.team:
@@ -376,6 +390,9 @@ def apply_set_facing(sim: "Sim", order: Order) -> None:
 def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:
     from coh.sim.systems import territory
 
+    result = _garrisoned(sim, order)
+    if not result.ok:
+        return result
     if order.point_id not in sim.map.points:  # type: ignore[attr-defined]
         return OrderResult(False, f"no such point {order.point_id!r}")  # type: ignore[attr-defined]
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
@@ -399,21 +416,35 @@ def apply_capture(sim: "Sim", order: Order) -> None:
 
 
 def validate_garrison(sim: "Sim", player: "Player", order: Order) -> OrderResult:
-    """The building must exist and the squad must be able to garrison at all.
+    """The squad must be able to garrison, and the building must have room.
 
-    `can_garrison` is false for vehicles (task 11); which *buildings* a squad
-    that can garrison may enter is task 12's job.
+    `can_garrison` is false for vehicles. Only neutral buildings are enterable
+    in M1, they hold one team at a time, and they hold `capacity` squads —
+    `garrison.garrison_problem` owns those rules, and the garrison system
+    re-checks them when the squad actually arrives (the house may have filled
+    up or changed hands while it walked).
     """
-    if order.building_id not in sim.state.buildings:  # type: ignore[attr-defined]
+    from coh.sim.systems import garrison
+
+    building = sim.state.buildings.get(order.building_id)  # type: ignore[attr-defined]
+    if building is None:
         return OrderResult(False, f"no such building {order.building_id}")  # type: ignore[attr-defined]
+    result = _garrisoned(sim, order)
+    if not result.ok:
+        return result
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     sdef = sim.data.squads[squad.def_id]
     if not sdef.can_garrison:
         return OrderResult(False, f"squad {squad.id} ({squad.def_id}) cannot garrison")
+    problem = garrison.garrison_problem(sim, squad, building)
+    if problem:
+        return OrderResult(False, problem)
     return OK
 
 
 def apply_garrison(sim: "Sim", order: Order) -> None:
+    """Walk to the nearest cell beside the building; `systems/garrison.py`
+    takes it from there once the squad is in reach."""
     from coh.sim.systems import movement
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
@@ -430,11 +461,35 @@ def apply_garrison(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, goal_cell, SquadState.MOVING)
 
 
+def validate_ungarrison(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    if squad.garrison_in is None:
+        return OrderResult(False, f"squad {squad.id} is not garrisoned")
+    return OK
+
+
+def apply_ungarrison(sim: "Sim", order: Order) -> None:
+    """Step outside immediately (see `garrison.exit_cell` for where).
+
+    Like `SetFacing` this is an action rather than a standing order, so
+    nothing is left on `squad.order` for later systems to trip over.
+    """
+    from coh.sim.systems import garrison
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    squad.order = None
+    garrison.leave(sim, squad, settle=True)
+
+
 # -- production orders (task 14): see coh/sim/systems/production.py ------------
 
 
 def validate_build(sim: "Sim", player: "Player", order: Order) -> OrderResult:
     from coh.sim.systems import production
+
+    result = _garrisoned(sim, order)
+    if not result.ok:
+        return result
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     sdef = sim.data.squads[squad.def_id]
@@ -656,7 +711,7 @@ def validate_reinforce(sim: "Sim", player: "Player", order: Order) -> OrderResul
     if squad.abandoned:
         return OrderResult(False, f"squad {squad.id} is abandoned and cannot reinforce")
     if squad.garrison_in is not None:
-        return OrderResult(False, f"squad {squad.id} is garrisoned and cannot reinforce")
+        return OrderResult(False, f"squad {squad.id} is garrisoned; ungarrison first")
     if len(squad.members) >= sdef.members:
         return OrderResult(False, f"squad {squad.id} is already at full strength")
     if reinforce_building(sim, squad) is None:
@@ -692,12 +747,12 @@ class OrderHandler:
 # a `validate_<order>` of their own, and `apply_squad_order` where storing the
 # order is not enough.
 ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
-    Move: OrderHandler(_accept, apply_move),
-    AttackMove: OrderHandler(_accept, apply_attack_move),
+    Move: OrderHandler(validate_walk, apply_move),
+    AttackMove: OrderHandler(validate_walk, apply_attack_move),
     Attack: OrderHandler(validate_attack, apply_attack),
     Capture: OrderHandler(validate_capture, apply_capture),
     Garrison: OrderHandler(validate_garrison, apply_garrison),
-    Ungarrison: OrderHandler(_accept, apply_squad_order),
+    Ungarrison: OrderHandler(validate_ungarrison, apply_ungarrison),
     Retreat: OrderHandler(validate_retreat, apply_retreat),
     Reinforce: OrderHandler(validate_reinforce, apply_reinforce),
     SetFacing: OrderHandler(validate_set_facing, apply_set_facing),

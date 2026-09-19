@@ -84,6 +84,16 @@ def _clear_dead_op_buildings(sim: "Sim") -> None:
             point.op_building = None
 
 
+def clear_op_building(sim: "Sim", building_id: int) -> None:
+    """Forget `building_id` as an observation post, now, rather than on the
+    next tick's sweep — a building's death is handled in one place (task 12),
+    and nothing should see a point pointing at a building that is gone."""
+    for pid in sorted(sim.state.points):
+        point = sim.state.points[pid]
+        if point.op_building == building_id:
+            point.op_building = None
+
+
 def _has_living_op(sim: "Sim", point: "PointState") -> bool:
     return point.op_building is not None and point.op_building in sim.state.buildings
 

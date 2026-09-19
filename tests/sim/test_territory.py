@@ -146,10 +146,15 @@ def test_retreating_squad_does_not_capture():
 
 
 def test_garrisoned_squad_does_not_capture():
-    sim = make_sim()
+    from coh.sim.systems import garrison
+
+    # A house 6 m from 'mid': well inside the 10 m capture radius, so being
+    # garrisoned is the only thing that can stop the squad capturing.
+    sim = make_sim(neutral_buildings=[{"def": "house", "cell": [22, 14]}])
+    house = next(b for b in sim.state.buildings.values() if b.neutral)
     squad = spawn(sim, 0, "rifles", (20, 15))
     sim.issue(0, [Capture(squad.id, "mid")])
-    squad.garrison_in = 999
+    garrison.enter(sim, squad, house)
     sim.run(CAPTURE_TICKS)
     assert sim.state.points["mid"].owner_team is None
 
