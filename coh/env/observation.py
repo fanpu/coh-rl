@@ -10,7 +10,15 @@ omniscient `GameState` is narrowed to what one player may legally know:
   team's last-known state of them is reported as a `GhostView`;
 - **points** are public knowledge (as in CoH: the minimap shows ownership and
   capture progress for everyone), except `connected`, which is supply
-  information and is `None` for enemy-owned points.
+  information and is `None` for enemy-owned points, and `has_op`, which is a
+  structure on the ground and so is fogged like one.
+
+Two facts the sim keeps no per-team memory of — whether an enemy point carries
+an observation post, and how badly a neutral building has been shot up — would
+otherwise be read live out of the omniscient state. `ObservationMemory` is the
+observation layer's own last-known store for them: `CohEnv` keeps one per
+match and hands it to every `build_observation` call, so a team reports what
+it last saw rather than what is true right now.
 
 Every view is a plain frozen dataclass of JSON types, and
 `Observation.to_dict()` returns a plain, `json.dumps`-able structure that M2's
@@ -24,7 +32,7 @@ placement, since "where" is the agent's problem).
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -96,6 +104,31 @@ class PointView:
     progress: float
     connected: bool | None  # None for enemy-owned points
     has_op: bool
+
+
+@dataclass
+class ObservationMemory:
+    """Per-team last-known facts that `GameState` itself does not remember.
+
+    Both maps are keyed by team, then by the thing observed. A team that has
+    never seen the thing has no entry, and the caller falls back to the
+    no-knowledge default (no observation post; an undamaged building).
+    """
+
+    point_has_op: dict[int, dict[str, bool]] = field(default_factory=dict)
+    neutral_hp_frac: dict[int, dict[int, float]] = field(default_factory=dict)
+
+    def remember_op(self, team: int, point_id: str, has_op: bool) -> None:
+        self.point_has_op.setdefault(team, {})[point_id] = has_op
+
+    def recall_op(self, team: int, point_id: str) -> bool:
+        return self.point_has_op.get(team, {}).get(point_id, False)
+
+    def remember_neutral_hp(self, team: int, building_id: int, hp_frac: float) -> None:
+        self.neutral_hp_frac.setdefault(team, {})[building_id] = hp_frac
+
+    def recall_neutral_hp(self, team: int, building_id: int) -> float:
+        return self.neutral_hp_frac.get(team, {}).get(building_id, 1.0)
 
 
 @dataclass(frozen=True)
@@ -217,17 +250,43 @@ def _squad_view(sim: "Sim", squad: Squad, *, friendly: bool, threats: list[Squad
     )
 
 
-def _building_view(sim: "Sim", building: Building, *, friendly: bool, garrison_count: int) -> BuildingView:
+def _building_view(
+    sim: "Sim",
+    building: Building,
+    *,
+    friendly: bool,
+    garrison_count: int,
+    hp_frac: float | None = None,
+) -> BuildingView:
     return BuildingView(
         id=building.id,
         def_id=building.def_id,
         owner=building.owner,
         cell=building.cell,
-        hp_frac=_building_hp_frac(sim, building),
+        hp_frac=_building_hp_frac(sim, building) if hp_frac is None else hp_frac,
         progress=building.progress,
         queue=[item.item_id for item in building.queue] if friendly else [],
         garrison_count=garrison_count,
     )
+
+
+def _sees_point(sim: "Sim", team: int, point_def, point) -> bool:
+    """Can `team` currently tell whether this point carries an observation post?
+
+    It can if it holds the point, if it can see the post itself, or if it has
+    eyes on the point's own cell (an OP that was there and has since been
+    blown up is then confirmed gone).
+    """
+    if point.owner_team == team:
+        return True
+    op = sim.state.buildings.get(point.op_building) if point.op_building is not None else None
+    if op is not None and vision.is_visible(sim, team, op):
+        return True
+    grid = sim.state.visible.get(team)
+    if grid is None:
+        return False
+    cx, cy = point_def.cell
+    return bool(grid[cy, cx])
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +367,17 @@ def available_orders(sim: "Sim", player_id: int) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_observation(sim: "Sim", player_id: int) -> Observation:
-    """The fog-filtered observation of `sim` for `player_id`."""
+def build_observation(
+    sim: "Sim", player_id: int, memory: ObservationMemory | None = None
+) -> Observation:
+    """The fog-filtered observation of `sim` for `player_id`.
+
+    Pass the match's `ObservationMemory` to get last-known reporting for the
+    facts the sim keeps no ghosts of; without one, anything the team cannot
+    see right now is reported as "no observation post" / "undamaged".
+    """
+    if memory is None:
+        memory = ObservationMemory()
     player = sim.state.players[player_id]
     team = player.team
 
@@ -346,7 +414,8 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
         visible = vision.is_visible(sim, team, building)
         if building.neutral or building.owner is None:
             # Neutral buildings are map furniture: their positions are public,
-            # but who is hiding inside is not.
+            # but who is hiding inside -- and how much of the house is left --
+            # is only known while someone is looking at it.
             count = (
                 len(building.garrison)
                 if visible
@@ -356,7 +425,14 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
                     if sid in sim.state.squads and sim.state.players[sim.state.squads[sid].owner].team == team
                 )
             )
-            neutral_buildings.append(_building_view(sim, building, friendly=False, garrison_count=count))
+            if visible:
+                hp_frac = _building_hp_frac(sim, building)
+                memory.remember_neutral_hp(team, building.id, hp_frac)
+            else:
+                hp_frac = memory.recall_neutral_hp(team, building.id)
+            neutral_buildings.append(
+                _building_view(sim, building, friendly=False, garrison_count=count, hp_frac=hp_frac)
+            )
             continue
         owner_team = sim.state.players[building.owner].team
         if owner_team == team:
@@ -388,6 +464,11 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
         point_def = sim.map.points[point_id]
         point = sim.state.points[point_id]
         enemy_owned = point.owner_team is not None and point.owner_team != team
+        if _sees_point(sim, team, point_def, point):
+            has_op = economy.has_observation_post(sim, point)
+            memory.remember_op(team, point_id, has_op)
+        else:
+            has_op = memory.recall_op(team, point_id)
         points.append(
             PointView(
                 id=point_id,
@@ -397,7 +478,7 @@ def build_observation(sim: "Sim", player_id: int) -> Observation:
                 owner_team=point.owner_team,
                 progress=point.progress,
                 connected=None if enemy_owned else (point_def.sector in connected),
-                has_op=economy.has_observation_post(sim, point),
+                has_op=has_op,
             )
         )
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from coh.data.loader import load_game_data
 from coh.data.schema import GameData
-from coh.env.observation import Observation, build_observation
+from coh.env.observation import Observation, ObservationMemory, build_observation
 from coh.maps.format import GameMap, load_map
 from coh.sim.constants import TICKS_PER_SECOND
 from coh.sim.orders import Order, OrderResult, order_to_dict
@@ -57,6 +57,7 @@ class CohEnv:
         self._map = game_map
         self.sim: Sim | None = None
         self.order_log: list[tuple[int, int, dict]] = []
+        self.observation_memory = ObservationMemory()
 
     # -- properties -------------------------------------------------------
 
@@ -89,6 +90,7 @@ class CohEnv:
             config=self.config,
         )
         self.order_log = []
+        self.observation_memory = ObservationMemory()
         return self._observations()
 
     def step(
@@ -154,7 +156,7 @@ class CohEnv:
 
     def _observations(self) -> dict[int, Observation]:
         assert self.sim is not None
-        return {pid: build_observation(self.sim, pid) for pid in self.player_ids}
+        return {pid: build_observation(self.sim, pid, self.observation_memory) for pid in self.player_ids}
 
     def _rewards(self) -> dict[int, float]:
         assert self.sim is not None

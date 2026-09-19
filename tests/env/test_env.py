@@ -32,6 +32,14 @@ def env() -> CohEnv:
     return make_env()
 
 
+def _point(obs, point_id: str):
+    return next(p for p in obs.points if p.id == point_id)
+
+
+def _neutral(obs, building_id: int):
+    return next(b for b in obs.neutral_buildings if b.id == building_id)
+
+
 # ---------------------------------------------------------------------------
 # lifecycle
 # ---------------------------------------------------------------------------
@@ -137,6 +145,46 @@ def test_own_and_ally_squads_are_always_visible(env):
     own_ids = {s.id for s in obs[0].own_squads}
     assert own_ids == {s.id for s in env.sim.state.squads.values() if s.owner == 0}
     assert obs[0].ally_squads == []  # 1v1: no allies
+
+
+def test_enemy_observation_post_is_hidden_until_it_is_scouted(env):
+    """`has_op` is a building on the ground, so it is fogged like one."""
+    env.reset()
+    op = env.sim.spawn_building(1, "op_us", (33, 16))
+    env.sim.state.points["east"].op_building = op.id
+
+    obs, _r, _d, _i = env.step({})
+    assert _point(obs[1], "east").has_op is True  # its owner knows
+    assert _point(obs[0], "east").has_op is False  # nobody from team 0 has looked
+
+    scout = env.sim.spawn_squad(0, "rifles", center_of((33, 18)))
+    obs, _r, _d, _i = env.step({})
+    assert _point(obs[0], "east").has_op is True
+
+    del env.sim.state.squads[scout.id]  # eyes gone, memory stays
+    env.sim.state.points["east"].op_building = None
+    obs, _r, _d, _i = env.step({})
+    assert _point(obs[0], "east").has_op is True
+
+
+def test_neutral_building_damage_outside_vision_is_not_reported(env):
+    env.reset()
+    house = env.sim.spawn_building(None, "house", (24, 2))
+    obs, _r, _d, _i = env.step({})
+    assert _neutral(obs[0], house.id).hp_frac == 1.0
+
+    house.hp *= 0.5  # shelled while nobody from team 0 is watching
+    obs, _r, _d, _i = env.step({})
+    assert _neutral(obs[0], house.id).hp_frac == 1.0
+
+    scout = env.sim.spawn_squad(0, "rifles", center_of((24, 5)))
+    obs, _r, _d, _i = env.step({})
+    assert _neutral(obs[0], house.id).hp_frac == pytest.approx(0.5)
+
+    del env.sim.state.squads[scout.id]
+    house.hp *= 0.5
+    obs, _r, _d, _i = env.step({})
+    assert _neutral(obs[0], house.id).hp_frac == pytest.approx(0.5)  # last known
 
 
 # ---------------------------------------------------------------------------
