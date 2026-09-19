@@ -34,6 +34,8 @@ playwright_or_skip()
 #   #800 (player 0)  squad at cell (70, 70) — own, inside the t=4 disc
 #   #801 (player 1)  squad at cell (52, 30) — in neither disc -> hidden
 FOG_SCENARIO_JS = """(() => {
+  var size = window.__viewer.mapSize();
+  var W = size.W, H = size.H;
   function packVis(inside) {
     var bytes = new Uint8Array(Math.ceil(W * H / 8));
     for (var cy = 0; cy < H; cy++) {
@@ -53,7 +55,7 @@ FOG_SCENARIO_JS = """(() => {
   var visA = packVis(disc(20, 20, 8));
   var visB = packVis(disc(70, 70, 8));
 
-  var base = frames[0];
+  var base = window.__viewer.data().frames[0];
   var sq0 = base.squads[0] || {th: 0, mhp: [60], w: [''], sup: 0, st: 'idle'};
   function sq(o) { var x = JSON.parse(JSON.stringify(sq0)); for (var k in o) x[k] = o[k]; return x; }
   var bl0 = base.buildings[0];
@@ -89,7 +91,7 @@ FOG_SCENARIO_JS = """(() => {
     {k: 'shot', t: 4, d: {src: 800, dst: 801, hit: true, src_pos: [141, 141], dst_pos: [105, 61]}}
   ];
 
-  var data = JSON.parse(JSON.stringify(D));
+  var data = JSON.parse(JSON.stringify(window.__viewer.data()));
   data.frames = [frame(0, visA), frame(2, visB), frame(4, visB, events)];
   data.winner = null;
   window.__viewer.inject(data);

@@ -28,6 +28,7 @@ from tests.viewer.conftest import (  # noqa: F401  (fixtures are used by name)
     playwright_or_skip,
     shoot,
 )
+from tests.viewer.showcase import SHOWCASE_EVENTS, SHOWCASE_JS
 
 pytestmark = pytest.mark.slow
 
@@ -128,7 +129,7 @@ def test_clicking_a_squad_opens_the_inspector(page, tmp_path):
     page.evaluate("window.__viewer.seek(0.5)")
     opened = page.evaluate(
         """(() => {
-          var f = frames[frameIndexFor(tick)];
+          var f = window.__viewer.frame();
           if (!f.squads.length) return null;
           window.__viewer.select('squad', f.squads[0].id);
           return f.squads[0].def;
@@ -147,7 +148,7 @@ def test_the_winner_banner_appears_at_the_end(page):
     assert page.locator("#banner").is_hidden()
     page.evaluate("window.__viewer.seek(1)")
     page.evaluate("window.__viewer.redraw()")
-    has_game_over = page.evaluate("allEvents.some(function (e) { return e.k === 'game_over'; })")
+    has_game_over = page.evaluate("window.__viewer.events().some(function (e) { return e.k === 'game_over'; })")
     if not has_game_over:
         pytest.skip("this match ran out of time without a game_over event")
     assert page.locator("#banner").is_visible()
@@ -164,7 +165,7 @@ def test_unknown_kinds_and_terrain_never_throw(page, tmp_path):
     """The sim keeps growing; the viewer must degrade, not explode."""
     page.evaluate(
         """(() => {
-          var f = JSON.parse(JSON.stringify(frames[frameIndexFor(tick)]));
+          var f = JSON.parse(JSON.stringify(window.__viewer.frame()));
           var s = JSON.parse(JSON.stringify(f.squads[0] || {id: 1, o: 0, x: 40, y: 40, h: 0, n: 1, max: 1,
                                                             hp: 1, sup: 0, st: 'idle', th: 0, mhp: [1], w: ['']}));
           s.id = 4242; s.kind = 'hovercraft'; s.def = 'flying_saucer'; s.x = 60; s.y = 60;
@@ -174,7 +175,7 @@ def test_unknown_kinds_and_terrain_never_throw(page, tmp_path):
             {k: 'no_position_at_all', t: f.t, d: {}},
             {k: 'shot', t: f.t, d: {src: 1, dst: 2, hit: true}}
           ];
-          var data = JSON.parse(JSON.stringify(D));
+          var data = JSON.parse(JSON.stringify(window.__viewer.data()));
           data.frames = [f];
           data.map.terrain[10] = 'Z'.repeat(data.map.width);
           window.__viewer.inject(data);
@@ -198,73 +199,10 @@ def test_a_missing_frame_stream_shows_an_error_not_a_blank_page(browser, broken_
 
 # --- the full unit / effect showcase ----------------------------------------
 
-# One synthetic frame holding every unit presentation and every event effect
-# the scripted fixture agents never actually produce. This is the regression
-# test for the rendering paths *and* the source of `docs/img/viewer-units.png`.
-SHOWCASE_JS = """(() => {
-  var f = JSON.parse(JSON.stringify(frames[frameIndexFor(tick)]));
-  var base = f.squads[0] || {id: 1, o: 0, def: 'rifles', kind: 'infantry', x: 0, y: 0, h: 0, th: 0,
-                             n: 1, max: 1, hp: 1, mhp: [60], w: [''], sup: 0, st: 'idle'};
-  function sq(o) { var s = JSON.parse(JSON.stringify(base)); for (var k in o) s[k] = o[k]; return s; }
-  f.squads = [
-    sq({id: 900, o: 0, def: 'hmg_team', kind: 'team_weapon', x: 70, y: 86, h: 0.6, fa: 0.6,
-        n: 3, max: 3, hp: 1, st: 'set_up'}),
-    sq({id: 901, o: 0, def: 'mortar_team', kind: 'team_weapon', x: 108, y: 86, h: 1.1,
-        n: 3, max: 3, hp: 1, st: 'setting_up', setup: 18}),
-    sq({id: 902, o: 1, def: 'at_team', kind: 'team_weapon', x: 146, y: 86, h: 2.2, fa: 3.3,
-        n: 0, max: 3, hp: 0, ab: 1}),
-    sq({id: 903, o: 1, def: 'tank', kind: 'vehicle', x: 70, y: 118, h: 0.7, th: 2.4,
-        n: 1, max: 1, hp: 0.7}),
-    sq({id: 904, o: 1, def: 'pioneers', kind: 'infantry', x: 108, y: 118, h: 0,
-        n: 3, max: 4, hp: 0.3, sup: 2, st: 'retreating'}),
-    sq({id: 905, o: 0, def: 'rifles', kind: 'infantry', x: 146, y: 118, h: 0,
-        n: 4, max: 6, hp: 0.65, sup: 1, re: 1}),
-    sq({id: 906, o: 0, def: 'engineers', kind: 'infantry', x: 70, y: 150, h: 0,
-        n: 4, max: 4, hp: 1, g: 910})
-  ];
-  var b0 = f.buildings[0];
-  function bl(o) { var b = JSON.parse(JSON.stringify(b0)); for (var k in o) b[k] = o[k]; return b; }
-  f.buildings = [
-    bl({id: 910, o: 0, def: 'barracks', cx: 33, cy: 74, w: 3, h: 3, hp: 1, prog: 1, n: 2, q: []}),
-    bl({id: 911, o: 1, def: 'tank_depot', cx: 52, cy: 74, w: 3, h: 3, hp: 0.45, prog: 0.4, n: 0, q: []}),
-    bl({id: 912, o: 0, def: 'hq_us', cx: 70, cy: 74, w: 4, h: 4, hp: 0.8, prog: 1, n: 0,
-        q: [['train', 'rifles', 9], ['research', 'phase_2', 20]]})
-  ];
-  f.events = [
-    {k: 'shot', t: f.t, d: {src: 900, dst: 904, hit: true, src_pos: [70, 86], dst_pos: [108, 118]}},
-    {k: 'shot', t: f.t, d: {src: 904, dst: 900, hit: false, src_pos: [108, 118], dst_pos: [70, 86]}},
-    {k: 'explosion', t: f.t, d: {src: 901, pos: [128, 136], radius: 6}},
-    {k: 'vehicle_destroyed', t: f.t, d: {id: 990, owner: 1, def_id: 'tank', pos: [88, 136]}},
-    {k: 'squad_destroyed', t: f.t, d: {id: 991, owner: 1, def_id: 'pioneers', pos: [160, 136]}},
-    {k: 'weapon_abandoned', t: f.t, d: {id: 902, owner: 1, def_id: 'at_team', pos: [146, 86]}},
-    {k: 'weapon_recrewed', t: f.t, d: {id: 900, owner: 0, def_id: 'hmg_team', by: 905, pos: [70, 86]}},
-    {k: 'garrison_ejected', t: f.t, d: {squad: 906, building: 910, owner: 0, pos: [70, 152]}},
-    {k: 'garrison_entered', t: f.t, d: {squad: 906, building: 910, owner: 0}},
-    {k: 'building_completed', t: f.t, d: {building: 910, def_id: 'barracks', owner: 0}},
-    {k: 'construction_started', t: f.t, d: {building: 911, def_id: 'tank_depot', owner: 1, cell: [52, 74]}},
-    {k: 'unit_trained', t: f.t, d: {building: 912, unit: 'rifles', squad: 905, owner: 0}},
-    {k: 'research_completed', t: f.t, d: {building: 912, upgrade: 'phase_2', owner: 0}},
-    {k: 'upgrade_bought', t: f.t, d: {squad: 905, upgrade: 'bar', owner: 0}},
-    {k: 'reinforced', t: f.t, d: {squad: 905, owner: 0, def_id: 'rifles'}}
-  ];
-  f.terrain_delta = [];
-
-  // A second, event-free frame a few ticks later so the playhead can sit
-  // mid-animation: parked exactly on the events every effect would be at age 0.
-  var after = JSON.parse(JSON.stringify(f));
-  after.t = f.t + 8;
-  after.events = [];
-  after.vis = {};
-
-  var data = JSON.parse(JSON.stringify(D));
-  data.frames = [f, after];
-  data.winner = 0;
-  window.__viewer.inject(data);
-  window.__viewer.seekTick(f.t + 4);
-  window.__viewer.select('building', 912);
-  window.__viewer.camera(108, 118, 7.6);
-  return f.events.length;
-})()"""
+# `tests/viewer/showcase.py` builds one synthetic frame holding every unit
+# presentation and every event effect the scripted fixture agents never
+# actually produce. It is shared with the 3D tests and with the screenshot
+# tool, so all three look at exactly the same scene.
 
 
 @needs_chromium
@@ -273,7 +211,7 @@ def test_every_unit_presentation_and_effect_renders(page, tmp_path):
     page.evaluate("window.__viewer.redraw()")
     before = canvas_digest(page)
     events = page.evaluate(SHOWCASE_JS)
-    assert events == 15
+    assert events == SHOWCASE_EVENTS
     shoot(page, tmp_path / "viewer-units.png")
 
     assert page.errors == []

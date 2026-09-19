@@ -6,12 +6,20 @@
 <title>CoH replay viewer</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="style.css">
+<!-- three.js is vendored, pinned and loaded from disk: the viewer works
+     offline and never talks to a CDN. See vendor/three/README.md. -->
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
 </head>
 <body>
+<canvas id="cv3" hidden></canvas>
+<canvas id="ov" hidden></canvas>
 <canvas id="cv"></canvas>
 
 <div id="loading">loading frames&hellip;</div>
 <div id="error" hidden><h2>Could not load the replay</h2><p id="error-msg"></p></div>
+<div id="notice" hidden><span id="notice-msg"></span><button id="notice-close" title="dismiss">&times;</button></div>
 
 <header id="hud" hidden>
   <div class="player" id="p0"></div>
@@ -39,9 +47,12 @@
     <button id="btn-slower" title="slower (-)">&minus;</button>
     <span id="speed">1&times;</span>
     <button id="btn-faster" title="faster (+)">+</button>
+    <button id="btn-view" title="3D battlefield / 2D tactical map (V)">3D</button>
     <button id="btn-fog" title="fog of war (F)">Fog: all</button>
     <button id="btn-cover" title="cover overlay (C)">Cover</button>
     <button id="btn-sectors" title="sector borders (G)">Sectors</button>
+    <button id="btn-arcs" title="weapon arcs (Z)">Arcs</button>
+    <button id="btn-shadows" title="shadows (H)">Shadows</button>
     <button id="btn-help" title="help (?)">?</button>
   </div>
   <canvas id="timeline"></canvas>
@@ -51,27 +62,37 @@
   <div class="card">
     <h2>Controls</h2>
     <table>
+      <tr><td>V</td><td>3D battlefield &harr; 2D tactical map (remembered in the URL)</td></tr>
       <tr><td>Space</td><td>play / pause</td></tr>
       <tr><td>&larr; / &rarr;</td><td>step one frame</td></tr>
       <tr><td>+ / &minus;</td><td>speed 0.5&times; &hellip; 16&times;</td></tr>
       <tr><td>F</td><td>fog: omniscient &rarr; team 0 &rarr; team 1</td></tr>
       <tr><td>C</td><td>cover overlay (green heavy, yellow light)</td></tr>
-      <tr><td>G</td><td>sector borders and names</td></tr>
-      <tr><td>Wheel</td><td>zoom about the cursor</td></tr>
-      <tr><td>Drag</td><td>pan</td></tr>
+      <tr><td>G</td><td>territory tint, sector borders and names</td></tr>
+      <tr><td>Z</td><td>team-weapon arcs for every weapon (3D)</td></tr>
+      <tr><td>H</td><td>shadows on / off (3D)</td></tr>
+      <tr><td>Drag</td><td>pan the camera</td></tr>
+      <tr><td>Right-drag</td><td>rotate the camera (3D)</td></tr>
+      <tr><td>W A S D</td><td>pan the camera (3D)</td></tr>
+      <tr><td>Q / E</td><td>rotate the camera (3D)</td></tr>
+      <tr><td>Wheel</td><td>zoom toward the cursor</td></tr>
       <tr><td>Click</td><td>inspect a squad or building</td></tr>
+      <tr><td>Double-click</td><td>follow a unit (3D)</td></tr>
       <tr><td>Home</td><td>reset the camera</td></tr>
       <tr><td>? / Esc</td><td>show / hide this overlay</td></tr>
     </table>
     <p class="note">In a team fog view, enemy units outside that team's vision are
     hidden, buildings it has seen before show as greyed "last known" outlines, and
-    effects it could not have witnessed are dropped. Sector ownership and the
-    timeline event marks stay omniscient.</p>
+    effects it could not have witnessed are dropped. Both views apply the same
+    rules from the same code. Sector ownership and the timeline event marks stay
+    omniscient.</p>
+    <p class="note">Add <code>?quality=low</code> to the URL for a lighter 3D
+    view (no shadows, smaller textures) on weak graphics.</p>
     <h2>Legend</h2>
     <div id="legend"></div>
   </div>
 </div>
 
-<script src="viewer.js"></script>
+<script type="module" src="js/boot.js"></script>
 </body>
 </html>

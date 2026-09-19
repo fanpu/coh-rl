@@ -3,10 +3,13 @@
 
     uv run python -m coh.viewer match.replay.json --data-dir tests/data/fixtures
 
-Serves the static page from `viewer/` and the frame stream at `/frames.json`
-(gzip-encoded, built once into memory at startup). With `--no-serve` the frame
-stream is written to `--out` instead, which is handy for tests and for
-shipping a replay as a single file.
+Serves the static page from `coh/viewer/static/` and the frame stream at
+`/frames.json` (gzip-encoded, built once into memory at startup). With
+`--no-serve` the frame stream is written to `--out` instead, which is handy for
+tests and for shipping a replay as a single file.
+
+The static assets live inside the package (rather than in a top-level `viewer/`
+directory) so that `python -m coh.viewer` works from an installed wheel.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ from pathlib import Path
 from coh.replay.replay import load
 from coh.viewer.frames import build_frames, frames_json_gz
 
-STATIC_DIR = Path(__file__).resolve().parents[2] / "viewer"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,6 +51,15 @@ def make_handler(payload: bytes) -> type[http.server.SimpleHTTPRequestHandler]:
     """A static handler for `viewer/` that also answers `/frames.json`."""
 
     class Handler(http.server.SimpleHTTPRequestHandler):
+        # `.js` is already mapped by the stdlib, but the ES-module imports fail
+        # hard on a wrong Content-Type, so pin it rather than trust the host's
+        # mimetypes registry (a stray Windows entry serves it as text/plain).
+        extensions_map = {
+            **http.server.SimpleHTTPRequestHandler.extensions_map,
+            ".js": "text/javascript",
+            ".mjs": "text/javascript",
+        }
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
