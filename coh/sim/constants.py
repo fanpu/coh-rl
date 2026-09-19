@@ -14,3 +14,7 @@ CELL_M = 2.0
 # unit positions can't grow it unboundedly. Eviction is FIFO and purely a
 # cache (never affects results), so this has no effect on determinism.
 VISION_MASK_CACHE_MAX = 4096
+
+# A vehicle only advances while its heading is within this many degrees of its
+# desired travel direction; otherwise it spends the tick rotating in place.
+VEHICLE_MOVE_ARC_DEG = 45.0

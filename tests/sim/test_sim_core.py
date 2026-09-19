@@ -170,10 +170,17 @@ def test_spawned_squad_members_match_the_def():
     squad = spawn(sim, 1, "hmg_team", (20, 15))
     sdef = sim.data.squads["hmg_team"]
     assert squad.owner == 1
-    assert squad.state is SquadState.IDLE
+    # a team weapon spawns already deployed (SETTING_UP), not mid-march
+    assert squad.state is SquadState.SETTING_UP
     assert [m.weapon for m in squad.members] == list(sdef.loadout)
     assert all(m.hp == sdef.member_hp for m in squad.members)
     assert np.allclose(squad.pos, center_of((20, 15)))
+
+
+def test_spawned_non_team_weapon_squad_starts_idle():
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    assert squad.state is SquadState.IDLE
 
 
 # --------------------------------------------------------------------------
