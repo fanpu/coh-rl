@@ -19,7 +19,14 @@ Squad state during a move:
   `IDLE`; `Capture`/`Garrison`/`Build` keep their order for later systems to
   act on; a team weapon that stops moving (arrival, or an immediate no-op
   order) enters `SETTING_UP` facing its last travel direction, then `SET_UP`
-  after its weapon's `setup_time`;
+  after its weapon's `setup_time`; a squad that was sent to man an abandoned
+  team weapon crews it on arrival instead (`combat.try_recrew`), which takes
+  the arriving squad off the field altogether;
+- `TEARING_DOWN` is also how a deployed team weapon *turns*: `combat`'s
+  `set_facing` points `heading`/`facing` at the new bearing and drops the
+  squad into `TEARING_DOWN` with an empty path, so the machinery below walks
+  it back through `_on_arrival` and sets it up again — `2 x setup_time` in
+  all, with no special case of its own;
 - if the map changes underneath an in-flight path (a footprint gets
   stamped across the route), the squad re-plans to the same final goal the
   next time it would step into the now-blocked cell; a re-plan that finds
@@ -65,7 +72,10 @@ _ARRIVAL_CLEARS_ORDER = (orders_mod.Move, orders_mod.AttackMove, orders_mod.Retr
 def run(sim: "Sim") -> None:
     """Advance the movement system by one tick."""
     for sid in sorted(sim.state.squads):
-        _step_squad(sim, sim.state.squads[sid])
+        squad = sim.state.squads.get(sid)
+        if squad is None:
+            continue  # re-crewed into an abandoned weapon earlier this tick
+        _step_squad(sim, squad)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +213,7 @@ def _advance(sim: "Sim", squad: "Squad", sdef, mult: float, is_vehicle: bool) ->
 
         if is_vehicle:
             squad.heading = _rotate_toward(squad.heading, travel_heading, math.radians(sdef.rotation_deg_s) * DT)
-            if _angle_diff(squad.heading, travel_heading) > _VEHICLE_ARC_RAD:
+            if angle_diff(squad.heading, travel_heading) > _VEHICLE_ARC_RAD:
                 break  # still turning onto the arc; no displacement this tick
         else:
             squad.heading = travel_heading
@@ -255,9 +265,17 @@ def _enter_cell(sim: "Sim", squad: "Squad", sdef, cell: tuple[int, int]) -> None
 
 
 def _on_arrival(sim: "Sim", squad: "Squad", sdef) -> None:
+    from coh.sim.systems import combat
+
     order = squad.order
     if isinstance(order, _ARRIVAL_CLEARS_ORDER):
         squad.order = None
+
+    # A `Move` aimed at an abandoned team weapon ends with the squad manning
+    # it instead of standing around: the squad itself leaves the field here.
+    if combat.try_recrew(sim, squad):
+        return
+
     squad.state = SquadState.IDLE
 
     if sdef.kind == "team_weapon":
@@ -275,8 +293,12 @@ def _wrap(angle: float) -> float:
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
-def _angle_diff(a: float, b: float) -> float:
-    """Smallest absolute difference between two headings (radians)."""
+def angle_diff(a: float, b: float) -> float:
+    """Smallest absolute difference between two headings (radians).
+
+    Public because `systems/combat.py` measures firing arcs with it, and the
+    two must agree on what "how far off" means.
+    """
     return abs(_wrap(a - b))
 
 

@@ -370,16 +370,21 @@ def test_moving_shooter_applies_the_moving_accuracy_multiplier():
         assert abs(hits - expected) <= 4 * sigma, (seed, hits)
 
 
-def test_indirect_weapons_do_not_fire_in_this_task():
+def test_indirect_weapons_lob_shells_rather_than_rolling_to_hit():
+    """Task 10 owns indirect fire; `tests/sim/test_team_weapons.py` covers it.
+
+    All this asserts is that a mortar goes down the explosion path instead of
+    this module's bullet path: every firing raises an `explosion` event.
+    """
     sim = combat_sim()
     shooter = spawn(sim, 0, "mortar_team", (SHOOTER_CELL[0], SHOOTER_CELL[1]))
     shooter.state = SquadState.SET_UP
-    target = dummy(sim, TARGET_CELL)
+    target = dummy(sim, TARGET_CELL)  # 10 m away: exactly the mortar's min range
 
     fire_rounds(sim, shooter, 10)
 
-    assert damage_taken(target) == 0.0
-    assert shot_events(sim) == []
+    assert damage_taken(target) > 0.0
+    assert len(shot_events(sim)) == len([e for e in sim.state.events if e.kind == "explosion"])
 
 
 def test_below_min_range_no_shot():
