@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SIM = REPO / "coh" / "sim"
-VIEWER_JS = REPO / "coh" / "viewer" / "static" / "viewer.js"
+EFFECTS_JS = REPO / "coh" / "viewer" / "static" / "js" / "effects.js"
 
 # `kind="..."` covers both `Event(kind="shot")` and `kind = "squad_destroyed"`;
 # `QueueItem(kind=kind, ...)` passes a variable, so build-queue kinds ("train",
@@ -34,18 +34,18 @@ def sim_event_kinds() -> set[str]:
 
 
 def _js_object_keys(marker: str) -> set[str]:
-    text = VIEWER_JS.read_text()
+    text = EFFECTS_JS.read_text()
     start = text.index(marker)
     end = text.index("\n};", start)
     return set(re.findall(r"^\s{2}([a-z_]+):", text[start:end], re.M))
 
 
 def viewer_effect_kinds() -> set[str]:
-    return _js_object_keys("var EFFECTS = {")
+    return _js_object_keys("export const EVENT_EFFECTS = {")
 
 
 def viewer_marker_kinds() -> set[str]:
-    return _js_object_keys("var MARKER_COLOURS = {")
+    return _js_object_keys("export const MARKER_COLOURS = {")
 
 
 def test_the_extractors_find_the_kinds_we_know_about():
@@ -61,14 +61,14 @@ def test_every_sim_event_kind_is_handled_by_the_viewer():
     missing = sim_event_kinds() - viewer_effect_kinds()
     assert not missing, (
         "these event kinds fall through to the generic marker; give each one an "
-        "entry in EFFECTS in coh/viewer/static/viewer.js (use `draw: null` if it is shown "
-        "elsewhere): %s" % sorted(missing)
+        "entry in EVENT_EFFECTS in coh/viewer/static/js/effects.js (use `mode: null` "
+        "if it is shown elsewhere): %s" % sorted(missing)
     )
 
 
 def test_the_viewer_does_not_handle_kinds_the_sim_never_emits():
     stale = viewer_effect_kinds() - sim_event_kinds()
-    assert not stale, "EFFECTS handles kinds the sim no longer emits: %s" % sorted(stale)
+    assert not stale, "EVENT_EFFECTS handles kinds the sim no longer emits: %s" % sorted(stale)
 
 
 def test_deaths_and_captures_are_marked_on_the_timeline():

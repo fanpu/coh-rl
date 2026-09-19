@@ -18,8 +18,26 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-#cv { display: block; width: 100vw; height: 100vh; cursor: grab; }
-#cv.dragging { cursor: grabbing; }
+/* The two map surfaces are stacked; exactly one is ever un-hidden. */
+#cv, #cv3 { display: block; width: 100vw; height: 100vh; cursor: grab; }
+#cv3 { position: fixed; inset: 0; }
+#cv.dragging, #cv3.dragging { cursor: grabbing; }
+#cv3.picking { cursor: pointer; }
+
+#notice {
+  position: fixed;
+  left: 50%; top: 14px;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px 6px 14px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-left: 3px solid #d8b45a;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 5;
+}
+#notice button { background: none; border: 0; color: var(--dim); font-size: 16px; cursor: pointer; }
 
 #loading, #error {
   position: fixed;

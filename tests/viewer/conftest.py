@@ -189,8 +189,14 @@ def browser():
             instance.close()
 
 
-def open_page(browser, url, width=1280, height=860):
-    """A page with explicit timeouts everywhere; never auto-plays."""
+def open_page(browser, url, width=1280, height=860, view="2d", query=""):
+    """A page with explicit timeouts everywhere; never auto-plays.
+
+    `view` picks the renderer through the URL hash the app itself uses
+    (`#paused&view=2d`), so these tests drive the same deep link a human would.
+    The default is the 2D tactical map: the pixel-level fog assertions below
+    are written against that canvas.
+    """
     pg = browser.new_page(viewport={"width": width, "height": height})
     pg.set_default_timeout(ACTION_MS)
     pg.set_default_navigation_timeout(NAV_MS)
@@ -198,7 +204,7 @@ def open_page(browser, url, width=1280, height=860):
     pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     pg.on("pageerror", lambda e: errors.append("pageerror: %s" % e))
     pg.errors = errors
-    pg.goto(url + "#paused", wait_until="load", timeout=NAV_MS)
+    pg.goto(url + query + "#paused&view=" + view, wait_until="load", timeout=NAV_MS)
     return pg
 
 

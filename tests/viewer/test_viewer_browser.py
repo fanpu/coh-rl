@@ -128,7 +128,7 @@ def test_clicking_a_squad_opens_the_inspector(page, tmp_path):
     page.evaluate("window.__viewer.seek(0.5)")
     opened = page.evaluate(
         """(() => {
-          var f = frames[frameIndexFor(tick)];
+          var f = window.__viewer.frame();
           if (!f.squads.length) return null;
           window.__viewer.select('squad', f.squads[0].id);
           return f.squads[0].def;
@@ -147,7 +147,7 @@ def test_the_winner_banner_appears_at_the_end(page):
     assert page.locator("#banner").is_hidden()
     page.evaluate("window.__viewer.seek(1)")
     page.evaluate("window.__viewer.redraw()")
-    has_game_over = page.evaluate("allEvents.some(function (e) { return e.k === 'game_over'; })")
+    has_game_over = page.evaluate("window.__viewer.events().some(function (e) { return e.k === 'game_over'; })")
     if not has_game_over:
         pytest.skip("this match ran out of time without a game_over event")
     assert page.locator("#banner").is_visible()
@@ -164,7 +164,7 @@ def test_unknown_kinds_and_terrain_never_throw(page, tmp_path):
     """The sim keeps growing; the viewer must degrade, not explode."""
     page.evaluate(
         """(() => {
-          var f = JSON.parse(JSON.stringify(frames[frameIndexFor(tick)]));
+          var f = JSON.parse(JSON.stringify(window.__viewer.frame()));
           var s = JSON.parse(JSON.stringify(f.squads[0] || {id: 1, o: 0, x: 40, y: 40, h: 0, n: 1, max: 1,
                                                             hp: 1, sup: 0, st: 'idle', th: 0, mhp: [1], w: ['']}));
           s.id = 4242; s.kind = 'hovercraft'; s.def = 'flying_saucer'; s.x = 60; s.y = 60;
@@ -174,7 +174,7 @@ def test_unknown_kinds_and_terrain_never_throw(page, tmp_path):
             {k: 'no_position_at_all', t: f.t, d: {}},
             {k: 'shot', t: f.t, d: {src: 1, dst: 2, hit: true}}
           ];
-          var data = JSON.parse(JSON.stringify(D));
+          var data = JSON.parse(JSON.stringify(window.__viewer.data()));
           data.frames = [f];
           data.map.terrain[10] = 'Z'.repeat(data.map.width);
           window.__viewer.inject(data);
@@ -202,7 +202,7 @@ def test_a_missing_frame_stream_shows_an_error_not_a_blank_page(browser, broken_
 # the scripted fixture agents never actually produce. This is the regression
 # test for the rendering paths *and* the source of `docs/img/viewer-units.png`.
 SHOWCASE_JS = """(() => {
-  var f = JSON.parse(JSON.stringify(frames[frameIndexFor(tick)]));
+  var f = JSON.parse(JSON.stringify(window.__viewer.frame()));
   var base = f.squads[0] || {id: 1, o: 0, def: 'rifles', kind: 'infantry', x: 0, y: 0, h: 0, th: 0,
                              n: 1, max: 1, hp: 1, mhp: [60], w: [''], sup: 0, st: 'idle'};
   function sq(o) { var s = JSON.parse(JSON.stringify(base)); for (var k in o) s[k] = o[k]; return s; }
@@ -256,7 +256,7 @@ SHOWCASE_JS = """(() => {
   after.events = [];
   after.vis = {};
 
-  var data = JSON.parse(JSON.stringify(D));
+  var data = JSON.parse(JSON.stringify(window.__viewer.data()));
   data.frames = [f, after];
   data.winner = 0;
   window.__viewer.inject(data);
