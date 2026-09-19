@@ -51,3 +51,14 @@ ATTACK_ORDER_REPATH_S = 1.0
 # off to plink at a bunker they can barely scratch. An explicit `Attack`
 # order ignores this.
 BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT = 0.25
+
+# A building starts construction at this fraction of its full HP and gains the
+# rest in proportion to construction progress (structural, not a balance knob).
+CONSTRUCTION_START_HP_FRAC = 0.1
+
+# How close (in cells, to the nearest footprint edge) a builder must be before
+# it starts contributing construction progress.
+BUILD_RANGE_CELLS = 1.5
+
+# Maximum number of queued train/research items per building.
+MAX_QUEUE_LEN = 5

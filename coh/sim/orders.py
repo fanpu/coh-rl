@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, get_origin, get_type_hints
 
 from coh.maps.format import cell_of
 from coh.sim import pathfinding
+from coh.sim.constants import MAX_QUEUE_LEN
 from coh.sim.state import SquadState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -213,10 +214,6 @@ def apply_stop(sim: "Sim", order: Order) -> None:
     squad.target_id = None
 
 
-def apply_building_order(sim: "Sim", order: Order) -> None:
-    """Train/Research have no effect until task 14 implements queues."""
-
-
 # -- move-type orders (task 6): resolve to a path via coh/sim/systems/movement --
 
 
@@ -343,22 +340,165 @@ def apply_garrison(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, goal_cell, SquadState.MOVING)
 
 
-def apply_build(sim: "Sim", order: Order) -> None:
-    from coh.sim.systems import movement
+# -- production orders (task 14): see coh/sim/systems/production.py ------------
+
+
+def validate_build(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import production
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
-    bdef = sim.data.buildings.get(order.structure)  # type: ignore[attr-defined]
-    # `structure` naming a real, buildable-by-this-squad def is Task 14's
-    # (production/construction) job to validate, not ours; we just need
-    # *some* footprint to compute a walk-to cell.
-    footprint = bdef.footprint if bdef is not None else (1, 1)
+    sdef = sim.data.squads[squad.def_id]
+    structure = order.structure  # type: ignore[attr-defined]
+
+    bdef = sim.data.buildings.get(structure)
+    if bdef is None:
+        return OrderResult(False, f"unknown building {structure!r}")
+    if structure not in sdef.builds:
+        return OrderResult(False, f"squad {squad.id} ({squad.def_id}) cannot build {structure!r}")
+    if bdef.faction != player.faction:
+        return OrderResult(False, f"{structure!r} is a {bdef.faction} building, player {player.id} is {player.faction}")
+
+    missing = production.missing_requirements(sim, player.id, bdef.requires)
+    if missing:
+        return OrderResult(False, f"{structure!r} requires {missing}")
+
+    # Assisting / resuming an unfinished site of the same structure is free.
+    if production.unfinished_building_at(sim, player.id, structure, order.cell) is not None:  # type: ignore[attr-defined]
+        return OK
+
+    problem = production.build_site_problem(sim, player, bdef, order.cell)  # type: ignore[attr-defined]
+    if problem:
+        return OrderResult(False, problem)
+    if not production.can_afford(player, bdef.cost):
+        return OrderResult(False, f"player {player.id} cannot afford {structure!r}")
+    return OK
+
+
+def apply_build(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement, production
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    bdef = sim.data.buildings[order.structure]  # type: ignore[attr-defined]
+    site = production.unfinished_building_at(sim, squad.owner, order.structure, order.cell)  # type: ignore[attr-defined]
+    if site is None:
+        site = production.start_construction(sim, squad.owner, bdef, order.cell)  # type: ignore[attr-defined]
+    squad.build_target = site.id
+
     start_cell = cell_of(squad.pos)
-    goal_cell = pathfinding.nearest_adjacent_passable(
-        _passable(sim, squad), order.cell, footprint, start_cell  # type: ignore[attr-defined]
-    )
+    goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), site.cell, bdef.footprint, start_cell)
     if goal_cell is None:
-        goal_cell = order.cell  # type: ignore[attr-defined]
+        goal_cell = site.cell
     movement.start_path(sim, squad, order, goal_cell, SquadState.MOVING)
+
+
+def _producing_building(sim: "Sim", order: Order) -> tuple[Any, Any, OrderResult]:
+    """The building an order targets and its def, or the reason it can't act."""
+    building = sim.state.buildings[order.building]  # type: ignore[attr-defined]
+    bdef = sim.data.buildings.get(building.def_id)
+    if bdef is None:
+        return building, None, OrderResult(False, f"building {building.id} cannot produce anything")
+    if building.progress < 1.0:
+        return building, bdef, OrderResult(False, f"building {building.id} is still under construction")
+    if len(building.queue) >= MAX_QUEUE_LEN:
+        return building, bdef, OrderResult(False, f"building {building.id}'s queue is full ({MAX_QUEUE_LEN})")
+    return building, bdef, OK
+
+
+def validate_train(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import economy, production
+
+    building, bdef, result = _producing_building(sim, order)
+    if not result.ok:
+        return result
+
+    unit = order.unit  # type: ignore[attr-defined]
+    if unit not in bdef.produces:
+        return OrderResult(False, f"building {building.def_id!r} does not produce {unit!r}")
+    sdef = sim.data.squads[unit]
+
+    if economy.pop_used(sim, player.id) + sdef.population > economy.pop_cap(sim, player.id):
+        return OrderResult(False, f"population cap reached: {unit!r} needs {sdef.population}")
+    if not production.can_afford(player, sdef.cost):
+        return OrderResult(False, f"player {player.id} cannot afford {unit!r}")
+    return OK
+
+
+def apply_train(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import production
+
+    building = sim.state.buildings[order.building]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[order.unit]  # type: ignore[attr-defined]
+    production.enqueue(sim, building, "train", sdef.id, sdef.cost, sdef.build_time)
+
+
+def validate_research(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import production
+
+    building, bdef, result = _producing_building(sim, order)
+    if not result.ok:
+        return result
+
+    upgrade_id = order.upgrade  # type: ignore[attr-defined]
+    if upgrade_id not in bdef.researches:
+        return OrderResult(False, f"building {building.def_id!r} does not research {upgrade_id!r}")
+    udef = sim.data.upgrades[upgrade_id]
+
+    if upgrade_id in player.upgrades:
+        return OrderResult(False, f"player {player.id} already has {upgrade_id!r}")
+    if production.research_queued(sim, player.id, upgrade_id):
+        return OrderResult(False, f"{upgrade_id!r} is already queued")
+    missing = production.missing_requirements(sim, player.id, udef.requires)
+    if missing:
+        return OrderResult(False, f"{upgrade_id!r} requires {missing}")
+    if not production.can_afford(player, udef.cost):
+        return OrderResult(False, f"player {player.id} cannot afford {upgrade_id!r}")
+    return OK
+
+
+def apply_research(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import production
+
+    building = sim.state.buildings[order.building]  # type: ignore[attr-defined]
+    udef = sim.data.upgrades[order.upgrade]  # type: ignore[attr-defined]
+    production.enqueue(sim, building, "research", udef.id, udef.cost, udef.time)
+
+
+def validate_buy_upgrade(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    from coh.sim.systems import production
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    upgrade_id = order.upgrade  # type: ignore[attr-defined]
+
+    udef = sim.data.squad_upgrades.get(upgrade_id)
+    if udef is None:
+        return OrderResult(False, f"unknown squad upgrade {upgrade_id!r}")
+    if squad.def_id not in udef.applies_to:
+        return OrderResult(False, f"{upgrade_id!r} does not apply to {squad.def_id!r}")
+    if upgrade_id in squad.upgrades or squad.pending_upgrade == upgrade_id:
+        return OrderResult(False, f"squad {squad.id} already has {upgrade_id!r}")
+
+    missing = production.missing_requirements(sim, player.id, udef.requires)
+    if missing:
+        return OrderResult(False, f"{upgrade_id!r} requires {missing}")
+
+    used_slots = len(squad.upgrades) + (1 if squad.pending_upgrade is not None else 0)
+    if used_slots >= sdef.upgrade_slots:
+        return OrderResult(False, f"squad {squad.id} has no free upgrade slot ({sdef.upgrade_slots})")
+
+    cx, cy = cell_of(squad.pos)
+    if int(sim.map.sector_id[cy, cx]) not in sim.state.connected.get(player.team, []):
+        return OrderResult(False, f"squad {squad.id} is not in supplied friendly territory")
+    if not production.can_afford(player, udef.cost):
+        return OrderResult(False, f"player {player.id} cannot afford {upgrade_id!r}")
+    return OK
+
+
+def apply_buy_upgrade(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import production
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    production.start_squad_upgrade(sim, squad, sim.data.squad_upgrades[order.upgrade])  # type: ignore[attr-defined]
 
 
 @dataclass(frozen=True)
@@ -380,10 +520,10 @@ ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
     Retreat: OrderHandler(_accept, apply_retreat),
     Reinforce: OrderHandler(_accept, apply_squad_order),
     SetFacing: OrderHandler(_accept, apply_squad_order),
-    Build: OrderHandler(_accept, apply_build),
-    Train: OrderHandler(_accept, apply_building_order),
-    Research: OrderHandler(_accept, apply_building_order),
-    BuyUpgrade: OrderHandler(_accept, apply_squad_order),
+    Build: OrderHandler(validate_build, apply_build),
+    Train: OrderHandler(validate_train, apply_train),
+    Research: OrderHandler(validate_research, apply_research),
+    BuyUpgrade: OrderHandler(validate_buy_upgrade, apply_buy_upgrade),
     Stop: OrderHandler(_accept, apply_stop),
 }
 

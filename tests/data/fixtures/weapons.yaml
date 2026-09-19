@@ -100,3 +100,22 @@ weapons:
     indirect: true
     scatter_m: 3.0
     aoe_radius: 4.0
+
+  # Task 14 fixture: the weapon the `bar` squad upgrade swaps in.
+  bar:
+    damage: 30
+    ranges: [10, 20, 30]
+    min_range: 0
+    accuracy: [1.0, 0.6, 0.3]
+    penetration: [1.0, 1.0, 1.0]
+    suppression: [0.06, 0.05, 0.04]
+    cooldown: [1.0, 2.0]
+    cooldown_range_mult: [1.0, 1.0, 1.0]
+    burst: null
+    rate_of_fire: 1.0
+    reload: [0.0, 0.0]
+    reload_every: 1000
+    moving_accuracy: 0.5
+    target_table:
+      armour_tank:
+        damage: 0.01

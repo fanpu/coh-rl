@@ -7,6 +7,21 @@ upgrades:
     time: 30
     requires: []
 
+  # Task 14 fixture: Wehrmacht phase gate for `panzer_command`.
+  phase_2:
+    faction: wehr
+    cost: {manpower: 100, fuel: 20}
+    time: 20
+    requires: []
+
+  # Task 14 fixture: Supply-Yard-style upkeep discount.
+  supply_yard:
+    faction: us
+    cost: {manpower: 150}
+    time: 25
+    requires: []
+    upkeep_mult: 0.5
+
 squad_upgrades:
   bar_upgrade:
     applies_to: [rifles]
@@ -15,3 +30,13 @@ squad_upgrades:
     requires: [research_1]
     weapon: rifle
     count: 1
+
+  # Task 14 fixture: a real weapon swap (bar_upgrade above swaps `rifle` for
+  # `rifle`, which is deliberately a no-op).
+  bar:
+    applies_to: [rifles]
+    cost: {munitions: 60}
+    time: 20
+    requires: [barracks]
+    weapon: bar
+    count: 2

@@ -39,7 +39,7 @@ squads:
     rotation_deg_s: 180
     sight: 20
     capture_rate: 1.0
-    builds: [barracks]
+    builds: [barracks, tank_depot, op_us]
     suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
     reinforce_cost_mult: 1.0
     reinforce_time_mult: 1.0
@@ -139,3 +139,27 @@ squads:
     upgrade_slots: 0
     crushes_light_cover: true
     can_garrison: false
+
+  # Task 14 fixture: the Wehrmacht construction squad (mirrors `engineers`).
+  pioneers:
+    faction: wehr
+    kind: infantry
+    members: 4
+    member_hp: 60
+    loadout: ["", "", "", ""]
+    target_type: infantry
+    cost: {manpower: 200}
+    population: 4
+    build_time: 15
+    upkeep_per_min: 2
+    speed: 3.0
+    rotation_deg_s: 180
+    sight: 20
+    capture_rate: 1.0
+    builds: [panzer_command, op_wehr]
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true

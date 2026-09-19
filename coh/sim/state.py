@@ -78,6 +78,9 @@ class Squad:
     setup_done_tick: int = 0
     reinforce_done_tick: int = 0
     upgrades: list[str] = field(default_factory=list)
+    build_target: int | None = None  # building id this squad is constructing (task 14)
+    pending_upgrade: str | None = None  # squad upgrade being bought (task 14)
+    upgrade_done_tick: int = 0  # tick `pending_upgrade` lands on
     abandoned: bool = False  # team weapon whose crew died (task 10)
     turret_heading: float = 0.0  # vehicles (task 11)
     last_attacker_pos: tuple[float, float] | None = None  # armour facing (task 11)
@@ -214,6 +217,9 @@ def _squad(s: Squad) -> dict[str, Any]:
         "setup_done_tick": s.setup_done_tick,
         "reinforce_done_tick": s.reinforce_done_tick,
         "upgrades": list(s.upgrades),
+        "build_target": s.build_target,
+        "pending_upgrade": s.pending_upgrade,
+        "upgrade_done_tick": s.upgrade_done_tick,
         "abandoned": s.abandoned,
         "turret_heading": _r(s.turret_heading),
         "last_attacker_pos": None if s.last_attacker_pos is None else _rs(s.last_attacker_pos),
