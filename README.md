@@ -52,8 +52,8 @@ stress state (`uv run pytest -m perf`).
 
 `python -m coh.viewer` re-simulates a replay into a compact frame stream
 (`coh/viewer/frames.py`), then serves it gzipped at `/frames.json` next to the
-dependency-free canvas app in `viewer/`. Replays store only the order log, so
-the frames are rebuilt exactly, not stored.
+static page in `coh/viewer/static/`. Replays store only the order log, so the
+frames are rebuilt exactly, not stored.
 
 ```
 uv run python scripts/play_match.py --map hedgerow_crossing \

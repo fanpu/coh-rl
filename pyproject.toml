@@ -25,6 +25,11 @@ artifacts = [
     "coh/data/tables/*.yaml",
     "coh/maps/library/*.yaml",
 ]
+# The viewer's static page (and its vendored three.js) live inside the package
+# so `python -m coh.viewer` works from an installed wheel. They are tracked in
+# git, so `packages = ["coh"]` already picks them up; this only guards against
+# a future ignore rule quietly dropping them out of the wheel.
+include = ["coh/viewer/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

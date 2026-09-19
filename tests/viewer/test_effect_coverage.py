@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SIM = REPO / "coh" / "sim"
-VIEWER_JS = REPO / "viewer" / "viewer.js"
+VIEWER_JS = REPO / "coh" / "viewer" / "static" / "viewer.js"
 
 # `kind="..."` covers both `Event(kind="shot")` and `kind = "squad_destroyed"`;
 # `QueueItem(kind=kind, ...)` passes a variable, so build-queue kinds ("train",
@@ -61,7 +61,7 @@ def test_every_sim_event_kind_is_handled_by_the_viewer():
     missing = sim_event_kinds() - viewer_effect_kinds()
     assert not missing, (
         "these event kinds fall through to the generic marker; give each one an "
-        "entry in EFFECTS in viewer/viewer.js (use `draw: null` if it is shown "
+        "entry in EFFECTS in coh/viewer/static/viewer.js (use `draw: null` if it is shown "
         "elsewhere): %s" % sorted(missing)
     )
 
