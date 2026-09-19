@@ -132,6 +132,7 @@ class Ghost:
     def_id: str
     owner: int | None
     cell: tuple[int, int]
+    hp_frac: float
     last_seen_tick: int
 
 
@@ -252,6 +253,7 @@ def _ghost(g: Ghost) -> dict[str, Any]:
         "def_id": g.def_id,
         "owner": g.owner,
         "cell": list(g.cell),
+        "hp_frac": _r(g.hp_frac),
         "last_seen_tick": g.last_seen_tick,
     }
 
