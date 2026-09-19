@@ -32,7 +32,14 @@ import numpy as np
 from coh.maps.cover import cover_at
 from coh.maps.format import cell_of, center_of
 from coh.sim.constants import CELL_M, DT
-from coh.sim.orders import BuyUpgrade, Research, Train, order_to_dict, validate_order
+from coh.sim.orders import (
+    BuyUpgrade,
+    Research,
+    Train,
+    order_to_dict,
+    reinforce_building,
+    validate_order,
+)
 from coh.sim.state import Building, Squad
 from coh.sim.systems import economy, production, vision
 
@@ -155,33 +162,13 @@ def _building_hp_frac(sim: "Sim", building: Building) -> float:
     return max(0.0, min(1.0, building.hp / max_hp))
 
 
-def _rect_distance_m(pos: np.ndarray, cell: tuple[int, int], footprint: tuple[int, int]) -> float:
-    """Distance in meters from `pos` to a building footprint's rectangle."""
-    cx0, cy0 = cell
-    w, h = footprint
-    x0, y0 = cx0 * CELL_M, cy0 * CELL_M
-    x1, y1 = (cx0 + w) * CELL_M, (cy0 + h) * CELL_M
-    dx = max(x0 - pos[0], 0.0, pos[0] - x1)
-    dy = max(y0 - pos[1], 0.0, pos[1] - y1)
-    return float(np.hypot(dx, dy))
-
-
 def in_reinforce_range(sim: "Sim", squad: Squad) -> bool:
-    """Is this squad inside a friendly completed building's reinforce radius?"""
-    team = sim.state.players[squad.owner].team
-    for building_id in sorted(sim.state.buildings):
-        building = sim.state.buildings[building_id]
-        if building.owner is None or building.progress < 1.0:
-            continue
-        owner = sim.state.players.get(building.owner)
-        if owner is None or owner.team != team:
-            continue
-        bdef = sim.data.buildings.get(building.def_id)
-        if bdef is None or bdef.reinforce_radius <= 0:
-            continue
-        if _rect_distance_m(squad.pos, building.cell, bdef.footprint) <= bdef.reinforce_radius:
-            return True
-    return False
+    """Is this squad inside a friendly completed building's reinforce radius?
+
+    Delegates to the sim's own `reinforce_building`, so the observation can
+    never promise a reinforce that `validate_reinforce` would reject.
+    """
+    return reinforce_building(sim, squad) is not None
 
 
 def _squad_cover(sim: "Sim", squad: Squad, threat_pos: np.ndarray | None) -> str:

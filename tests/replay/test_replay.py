@@ -12,11 +12,12 @@ import json
 import pytest
 
 from coh.agents import T1Capper
-from coh.env import CohEnv, load_match_map
+from coh.env import CohEnv
 from coh.replay import Replay, load, replay_final_hash, resimulate, save
 from coh.sim.constants import TICKS_PER_SECOND
 from coh.sim.orders import Move
-from coh.sim.sim import PlayerSetup, SimConfig
+from coh.maps.format import load_map
+from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
 from tests.helpers import FIXTURES_DIR, fixture_data
 
 MAP_NAME = "hedgerow_crossing"
@@ -26,7 +27,7 @@ MATCH_SECONDS = 120.0
 
 @pytest.fixture(scope="module")
 def match_map():
-    return load_match_map(MAP_NAME, fixture_data(), skip_unknown_neutrals=True)
+    return load_map(MAP_NAME, footprints=neutral_footprints(fixture_data()))
 
 
 def play(match_map, seconds: float, seed: int = 0) -> CohEnv:

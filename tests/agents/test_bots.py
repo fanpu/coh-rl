@@ -17,8 +17,9 @@ import pytest
 
 import coh.agents
 from coh.agents import AGENTS, T0Idle, T1Capper
-from coh.env import CohEnv, load_match_map
-from coh.sim.sim import PlayerSetup, SimConfig
+from coh.env import CohEnv
+from coh.maps.format import load_map
+from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
 from tests.helpers import FIXTURES_DIR, fixture_data
 
 MAP_NAME = "hedgerow_crossing"
@@ -34,7 +35,7 @@ MIN_POINTS_BY_MINUTE_8 = 6
 
 @pytest.fixture(scope="module")
 def match_map():
-    return load_match_map(MAP_NAME, fixture_data(), skip_unknown_neutrals=True)
+    return load_map(MAP_NAME, footprints=neutral_footprints(fixture_data()))
 
 
 def play_match(match_map, p0: str, p1: str, seed: int = 0) -> dict:
@@ -56,12 +57,26 @@ def play_match(match_map, p0: str, p1: str, seed: int = 0) -> dict:
     issued = {pid: 0 for pid in env.player_ids}
     invalid = {pid: 0 for pid in env.player_ids}
     points_by_time: list[tuple[float, dict[int, int]]] = []
+    # Orders sent to a squad that was already reinforcing. Reinforce restores
+    # one model after another by itself and *any* other order cancels it, so
+    # a sound bot never touches such a squad.
+    reinforce_interruptions: list[tuple[int, int]] = []
 
     done = False
     while not done:
         orders = {pid: agents[pid].act(obs[pid]) for pid in env.player_ids}
         for pid, player_orders in orders.items():
             issued[pid] += len(player_orders)
+            reinforcing = {
+                squad.id
+                for squad in obs[pid].own_squads
+                if squad.order is not None and squad.order["type"] == "Reinforce"
+            }
+            reinforce_interruptions += [
+                (pid, order.squad)
+                for order in player_orders
+                if getattr(order, "squad", None) in reinforcing
+            ]
         obs, rewards, done, infos = env.step(orders)
         for pid, info in infos.items():
             invalid[pid] += info["invalid_orders"]
@@ -80,6 +95,7 @@ def play_match(match_map, p0: str, p1: str, seed: int = 0) -> dict:
         "issued": issued,
         "invalid": invalid,
         "points_by_time": points_by_time,
+        "reinforce_interruptions": reinforce_interruptions,
     }
 
 
@@ -155,6 +171,11 @@ def test_t1_mirror_matches_finish_cleanly(match_map, seed):
     for player_id in (0, 1):
         assert result["issued"][player_id] > 0
         assert invalid_rate(result, player_id) <= MAX_INVALID_ORDER_RATE
+
+
+def test_t1_never_interrupts_a_reinforcing_squad(match_map):
+    result = play_match(match_map, "t1", "t1", seed=2)
+    assert result["reinforce_interruptions"] == []
 
 
 def test_t1_is_deterministic_for_a_given_seed(match_map):

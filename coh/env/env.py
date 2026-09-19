@@ -11,15 +11,12 @@ invalid ones, so a replay reproduces the invalid-order counts exactly.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-import yaml
 
 from coh.data.loader import load_game_data
 from coh.data.schema import GameData
 from coh.env.observation import Observation, build_observation
-from coh.maps.format import LIBRARY_DIR, GameMap, MapError, load_map
+from coh.maps.format import GameMap, load_map
 from coh.sim.constants import TICKS_PER_SECOND
 from coh.sim.orders import Order, OrderResult, order_to_dict
 from coh.sim.sim import PlayerSetup, Sim, SimConfig, neutral_footprints
@@ -29,46 +26,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 # A draw (`state.winner == -1`) pays no one.
 DRAW = -1
-
-
-def load_match_map(
-    map_name: str, data: GameData, *, skip_unknown_neutrals: bool = False
-) -> GameMap:
-    """Load `map_name` with the neutral-building footprints `data` defines.
-
-    A map may place a neutral building that the stat tables in use don't
-    define; `Sim` then refuses to start. Strictly (the default) that is an
-    error, as it should be for shipped data. `skip_unknown_neutrals=True`
-    drops those placements instead, which is what lets a map from the
-    library be played against a *partial* table set — today, the hand-written
-    fixture tables, which define one neutral building where the library maps
-    use several.
-    """
-    known = neutral_footprints(data)
-    if not skip_unknown_neutrals:
-        return load_map(map_name, footprints=known)
-
-    doc = _map_document(map_name)
-    placements = doc.get("neutral_buildings") or []
-    doc = dict(doc, neutral_buildings=[p for p in placements if p.get("def") in known])
-    return load_map(doc, footprints=known)
-
-
-def unknown_neutral_defs(map_name: str, data: GameData) -> list[str]:
-    """Neutral-building defs `map_name` places that `data` does not define."""
-    known = neutral_footprints(data)
-    placements = _map_document(map_name).get("neutral_buildings") or []
-    return sorted({p.get("def") for p in placements if p.get("def") not in known})
-
-
-def _map_document(map_name: str) -> dict:
-    path = Path(map_name)
-    if not path.exists():
-        path = LIBRARY_DIR / f"{map_name}.yaml"
-    if not path.exists():
-        raise MapError(f"map not found: {map_name!r} (looked in {path})")
-    with path.open() as f:
-        return yaml.safe_load(f)
 
 
 class CohEnv:
@@ -123,7 +80,7 @@ class CohEnv:
             self._data = load_game_data()
         data = self._data
         if self._map is None:
-            self._map = load_match_map(self.map_name, data)
+            self._map = load_map(self.map_name, footprints=neutral_footprints(data))
         self.sim = Sim(
             game_map=self._map,
             players=self.players,

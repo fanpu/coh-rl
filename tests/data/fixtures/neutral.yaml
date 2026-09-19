@@ -6,3 +6,24 @@ neutral:
     target_type: building_light
     capacity: 6
     footprint: [2, 2]
+
+  # The three defs the library maps place (see
+  # `coh.maps.format.DEFAULT_FOOTPRINTS`); footprints match that table so a
+  # library map loads identically on fixture and shipped tables.
+  house_small:
+    hp: 400
+    target_type: building_light
+    capacity: 1
+    footprint: [3, 3]
+
+  house_large:
+    hp: 700
+    target_type: building_light
+    capacity: 2
+    footprint: [4, 4]
+
+  barn:
+    hp: 900
+    target_type: building_light
+    capacity: 3
+    footprint: [5, 4]

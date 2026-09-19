@@ -23,10 +23,11 @@ if __package__ is None and str(Path(__file__).resolve().parents[1]) not in sys.p
 
 from coh.agents import AGENTS  # noqa: E402
 from coh.data.loader import load_game_data  # noqa: E402
-from coh.env import CohEnv, load_match_map, unknown_neutral_defs  # noqa: E402
+from coh.env import CohEnv  # noqa: E402
+from coh.maps.format import load_map  # noqa: E402
 from coh.replay.replay import save  # noqa: E402
 from coh.sim.constants import DT  # noqa: E402
-from coh.sim.sim import PlayerSetup, SimConfig  # noqa: E402
+from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints  # noqa: E402
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -47,11 +48,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def run_match(args: argparse.Namespace) -> dict:
     """Play the match and return a summary dict (also used by the tests)."""
     data = load_game_data(Path(args.data_dir)) if args.data_dir else load_game_data()
-    missing = unknown_neutral_defs(args.map, data)
-    if missing:
-        print(f"note         {args.map} places neutral buildings {missing} that {args.data_dir or 'the packaged tables'} "
-              "does not define; those placements are skipped")
-    game_map = load_match_map(args.map, data, skip_unknown_neutrals=bool(missing))
+    game_map = load_map(args.map, footprints=neutral_footprints(data))
     players = [
         PlayerSetup(faction=args.f0, team=0, start_slot=0),
         PlayerSetup(faction=args.f1, team=1, start_slot=1),

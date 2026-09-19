@@ -9,7 +9,7 @@ The order schema is re-exported here too, so an agent never has to reach into
 `coh.sim`: orders are part of the env's public API.
 """
 
-from coh.env.env import CohEnv, load_match_map, unknown_neutral_defs
+from coh.env.env import CohEnv
 from coh.env.observation import (
     BuildingView,
     GhostView,
@@ -61,8 +61,6 @@ __all__ = [
     "Train",
     "Ungarrison",
     "build_observation",
-    "load_match_map",
     "order_from_dict",
     "order_to_dict",
-    "unknown_neutral_defs",
 ]

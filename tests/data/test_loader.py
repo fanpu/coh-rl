@@ -49,7 +49,7 @@ def test_loads_fixtures():
     }
     assert set(data.upgrades) == {"research_1", "phase_2", "supply_yard"}
     assert set(data.squad_upgrades) == {"bar_upgrade", "bar"}
-    assert set(data.neutral) == {"house"}
+    assert set(data.neutral) == {"house", "house_small", "house_large", "barn"}
 
 
 def test_rifle_accuracy():

@@ -30,7 +30,7 @@ import math
 from dataclasses import dataclass
 from typing import Iterable
 
-from coh.data.schema import GameData
+from coh.data.schema import Cost, GameData
 from coh.env import (
     AttackMove,
     Build,
@@ -42,7 +42,6 @@ from coh.env import (
     Reinforce,
     Retreat,
     SquadView,
-    Stop,
     Train,
 )
 from coh.maps.format import GameMap
@@ -52,10 +51,6 @@ from coh.maps.format import GameMap
 # A squad this far below strength with an enemy this close runs home.
 RETREAT_MEMBER_FRAC = 1.0 / 3.0
 RETREAT_ENEMY_RANGE_M = 40.0
-# How many decision steps a `Reinforce` order is given to do something before
-# the squad is considered stuck and put back to work. Without this the bot
-# would park under-strength squads at the HQ forever.
-REINFORCE_PATIENCE_STEPS = 8
 # How many unarmed capture-capable squads (construction squads, typically) the
 # bot is willing to own before it insists on infantry that can shoot back.
 MAX_UNARMED_SQUADS = 2
@@ -99,7 +94,6 @@ class T1Capper:
 
     def __init__(self) -> None:
         self.player_id = -1
-        self._reinforcing: dict[int, int] = {}
 
     # -- lifecycle --------------------------------------------------------
 
@@ -107,7 +101,6 @@ class T1Capper:
         self.player_id = player_id
         self.map = map
         self.data = data
-        self._reinforcing = {}
         # Permanently-owned HQ-sector points: `Capture` on them is always
         # rejected, so they must never be picked as a target.
         self._hq_point_ids = {
@@ -137,22 +130,23 @@ class T1Capper:
     # -- policy -----------------------------------------------------------
 
     def act(self, obs: Observation) -> list[Order]:
-        orders: list[Order] = []
+        # `obs.available` prices everything against the resources the player
+        # has *now*, so a step that spent twice over would have its second
+        # order rejected. One running purse covers the whole step.
+        purse = [obs.manpower, obs.munitions, obs.fuel]
         spoken_for: set[int] = set()
 
-        orders += self._production_orders(obs, spoken_for)
-        orders += self._survival_orders(obs, spoken_for)
+        orders: list[Order] = []
+        orders += self._production_orders(obs, spoken_for, purse)
+        orders += self._survival_orders(obs, spoken_for, purse)
         orders += self._territory_orders(obs, spoken_for)
         return orders
 
     # -- 1. production ----------------------------------------------------
 
-    def _production_orders(self, obs: Observation, spoken_for: set[int]) -> list[Order]:
-        # `obs.available` prices everything against the resources the player
-        # has *now*, so a step that spends twice over would have its second
-        # order rejected. Keep a running purse and only order what is still
-        # paid for; the new building comes first, it is the bigger win.
-        purse = [obs.manpower, obs.munitions, obs.fuel]
+    def _production_orders(self, obs: Observation, spoken_for: set[int], purse: list[float]) -> list[Order]:
+        # The new building goes first: it is the bigger win, and it should get
+        # the manpower ahead of one more squad.
         orders: list[Order] = []
 
         build_order = self._build_order(obs, spoken_for)
@@ -332,47 +326,52 @@ class T1Capper:
 
     # -- 2. survival ------------------------------------------------------
 
-    def _survival_orders(self, obs: Observation, spoken_for: set[int]) -> list[Order]:
-        # Squads that died since the last step never come back; drop them.
-        self._reinforcing = {
-            squad_id: waited
-            for squad_id, waited in self._reinforcing.items()
-            if squad_id in {squad.id for squad in obs.own_squads}
-        }
+    def _survival_orders(self, obs: Observation, spoken_for: set[int], purse: list[float]) -> list[Order]:
         orders: list[Order] = []
         for squad in obs.own_squads:
+            # A retreating squad takes no orders at all until it gets home.
             if squad.id in spoken_for or squad.state == "retreating":
                 continue
+            if self.data.squads[squad.def_id].kind == "vehicle":
+                continue  # vehicles can neither retreat nor reinforce
+
             shattered = squad.members <= max(1, math.floor(squad.max_members * RETREAT_MEMBER_FRAC))
-            # Retreating from *inside* the reinforce radius is a no-op that
-            # would be re-issued every step; there is nowhere safer to go.
+            # Retreating from *inside* the reinforce radius is pointless —
+            # the squad is already home, and reinforcing is the better move.
             if shattered and not squad.in_reinforce_range:
                 if self._enemy_near(squad, obs.enemy_squads, RETREAT_ENEMY_RANGE_M):
                     spoken_for.add(squad.id)
-                    self._reinforcing.pop(squad.id, None)
                     orders.append(Retreat(squad=squad.id))
                     continue
-            if squad.members < squad.max_members and squad.in_reinforce_range:
-                waited = self._reinforcing.get(squad.id, 0)
-                if waited >= REINFORCE_PATIENCE_STEPS:
-                    # Reinforcement isn't coming. Clear the standing order so
-                    # the squad counts as idle again and goes back to work.
-                    if squad.order is not None and squad.order["type"] == "Reinforce":
-                        orders.append(Stop(squad=squad.id))
-                    continue
-                self._reinforcing[squad.id] = waited + 1
+
+            if not (squad.members < squad.max_members and squad.in_reinforce_range):
+                continue
+            if squad.state == "garrisoned":
+                continue  # a garrisoned squad cannot be reinforced
+            if squad.order is not None and squad.order["type"] == "Reinforce":
+                # Already reinforcing: it restores one model after another on
+                # its own, and *any* other order would cancel it. Hands off.
                 spoken_for.add(squad.id)
-                if squad.order is None or squad.order["type"] != "Reinforce":
-                    orders.append(Reinforce(squad=squad.id))
-            else:
-                self._reinforcing.pop(squad.id, None)
+                continue
+            if not self._afford(purse, self._reinforce_model_cost(squad.def_id)):
+                continue
+            spoken_for.add(squad.id)
+            orders.append(Reinforce(squad=squad.id))
         return orders
+
+    def _reinforce_model_cost(self, def_id: str) -> Cost:
+        """What one replacement model costs — the same formula the sim uses."""
+        sdef = self.data.squads[def_id]
+        frac = self.data.economy.reinforce_base_cost_frac * sdef.reinforce_cost_mult / sdef.members
+        return Cost(
+            manpower=sdef.cost.manpower * frac,
+            munitions=sdef.cost.munitions * frac,
+            fuel=sdef.cost.fuel * frac,
+        )
 
     @staticmethod
     def _enemy_near(squad: SquadView, enemies: list[SquadView], radius_m: float) -> bool:
-        return any(
-            math.dist(squad.pos, enemy.pos) <= radius_m for enemy in enemies
-        )
+        return any(math.dist(squad.pos, enemy.pos) <= radius_m for enemy in enemies)
 
     # -- 3. territory -----------------------------------------------------
 
