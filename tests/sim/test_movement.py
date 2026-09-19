@@ -398,6 +398,48 @@ def test_team_weapon_tears_down_before_moving_then_sets_up_on_arrival():
     assert not np.allclose(squad.pos, start_pos)
 
 
+def test_freshly_spawned_team_weapon_starts_setting_up_then_sets_up():
+    sim = make_sim()
+    squad = spawn(sim, 0, "hmg_team", (10, 10))  # setup_time 3.0s (hmg weapon)
+    assert squad.state is SquadState.SETTING_UP
+    assert squad.facing == squad.heading
+
+    sim.run(23)  # 2.875s < 3s: still setting up
+    assert squad.state is SquadState.SETTING_UP
+
+    sim.run(5)  # tick 28: setup_time has elapsed
+    assert squad.state is SquadState.SET_UP
+
+
+# --------------------------------------------------------------------------
+# movement system: re-planning around a new obstacle mid-transit
+# --------------------------------------------------------------------------
+
+
+def test_squad_replans_around_a_footprint_stamped_mid_transit():
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (5, 10))
+    sim.issue(0, [Move(squad=squad.id, cell=(30, 10))])
+    sim.run(10)  # let it get moving along the direct route first
+
+    # Stamp a footprint straight across its remaining route.
+    sim.map.stamp_footprint((14, 9), (3, 3), blocked=True)
+    blocked_cells = {(x, y) for x in range(14, 17) for y in range(9, 12)}
+    assert cell_of(squad.pos) not in blocked_cells  # sanity: not already inside it
+
+    arrived = False
+    for _ in range(300):
+        sim.tick()
+        assert cell_of(squad.pos) not in blocked_cells, "squad walked through a blocked footprint"
+        if squad.state is SquadState.IDLE and not squad.path:
+            arrived = True
+            break
+
+    assert arrived, "squad never arrived after the mid-transit re-plan"
+    cx, cy = cell_of(squad.pos)
+    assert abs(cx - 30) <= 1 and cy == 10
+
+
 # --------------------------------------------------------------------------
 # determinism
 # --------------------------------------------------------------------------

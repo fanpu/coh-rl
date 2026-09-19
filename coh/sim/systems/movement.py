@@ -19,7 +19,16 @@ Squad state during a move:
   `IDLE`; `Capture`/`Garrison`/`Build` keep their order for later systems to
   act on; a team weapon that stops moving (arrival, or an immediate no-op
   order) enters `SETTING_UP` facing its last travel direction, then `SET_UP`
-  after its weapon's `setup_time`.
+  after its weapon's `setup_time`;
+- if the map changes underneath an in-flight path (a footprint gets
+  stamped across the route), the squad re-plans to the same final goal the
+  next time it would step into the now-blocked cell; a re-plan that finds
+  nothing reachable drops the path and applies the same order-keep/clear
+  rule as arrival, without actually treating it as one.
+
+`Sim.spawn_squad` also uses `setup_ticks` below: a freshly spawned team
+weapon starts `SETTING_UP` (it's always deployed, never mid-march) rather
+than `IDLE`.
 """
 
 from __future__ import annotations
@@ -41,9 +50,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 _VEHICLE_ARC_RAD = math.radians(VEHICLE_MOVE_ARC_DEG)
 
-# Order types that resolve to a path (see module docstring / task-6 brief).
+# Order types that clear on arrival; Capture/Garrison/Build instead keep
+# their order for later systems to act on (see module docstring).
 _ARRIVAL_CLEARS_ORDER = (orders_mod.Move, orders_mod.AttackMove, orders_mod.Retreat)
-_ARRIVAL_KEEPS_ORDER = (orders_mod.Capture, orders_mod.Garrison, orders_mod.Build)
 
 
 def run(sim: "Sim") -> None:
@@ -79,7 +88,7 @@ def start_path(sim: "Sim", squad: "Squad", order: orders_mod.Order, goal_cell: t
 
     if sdef.kind == "team_weapon" and squad.state in (SquadState.SET_UP, SquadState.SETTING_UP):
         squad.state = SquadState.TEARING_DOWN
-        squad.setup_done_tick = sim.state.tick + _setup_ticks(sim, sdef)
+        squad.setup_done_tick = sim.state.tick + setup_ticks(sim, sdef)
     elif not squad.path:
         _on_arrival(sim, squad, sdef)
     else:
@@ -114,11 +123,24 @@ def _step_squad(sim: "Sim", squad: "Squad") -> None:
     if isinstance(squad.order, orders_mod.AttackMove) and squad.target_id is not None:
         return  # halted: engaging a target (combat handles the fight)
 
+    is_vehicle = sdef.kind == "vehicle"
+
+    # The map can change after a path was computed (a building finishes, a
+    # footprint gets stamped across the route, ...). Cheaply revalidate just
+    # the immediate next cell each tick; only re-plan when it's actually
+    # gone bad, and only once (a failed re-plan drops the path rather than
+    # retrying every tick).
+    passable = sim.map.pass_veh if is_vehicle else sim.map.pass_inf
+    next_cell = squad.path[0]
+    if not passable[next_cell[1], next_cell[0]]:
+        _replan_or_stop(sim, squad, sdef, is_vehicle)
+        if not squad.path:
+            return
+
     mult = _speed_mult(sim, squad)
     if mult <= 0.0:
         return
 
-    is_vehicle = sdef.kind == "vehicle"
     if _advance(sim, squad, sdef, mult, is_vehicle):
         squad.moving = True
 
@@ -179,6 +201,23 @@ def _advance(sim: "Sim", squad: "Squad", sdef, mult: float, is_vehicle: bool) ->
     return moved
 
 
+def _replan_or_stop(sim: "Sim", squad: "Squad", sdef, is_vehicle: bool) -> None:
+    """The next cell on `squad.path` just became impassable: re-plan to the
+    same final goal. If nothing is reachable any more, drop the path and
+    apply the same order-keep/clear rule arrival would (but stay `IDLE`,
+    since this isn't really an arrival)."""
+    goal_cell = squad.path[-1]
+    start_cell = cell_of(squad.pos, CELL_M)
+    path = pathfinding.find_path_cached(sim, is_vehicle, start_cell, goal_cell)
+    if path is None:
+        squad.path = []
+        if isinstance(squad.order, _ARRIVAL_CLEARS_ORDER):
+            squad.order = None
+        squad.state = SquadState.IDLE
+        return
+    squad.path = list(path[1:])
+
+
 def _enter_cell(sim: "Sim", squad: "Squad", sdef, cell: tuple[int, int]) -> None:
     if sdef.kind == "vehicle" and sdef.crushes_light_cover:
         cx, cy = cell
@@ -196,7 +235,7 @@ def _on_arrival(sim: "Sim", squad: "Squad", sdef) -> None:
     if sdef.kind == "team_weapon":
         squad.state = SquadState.SETTING_UP
         squad.facing = squad.heading
-        squad.setup_done_tick = sim.state.tick + _setup_ticks(sim, sdef)
+        squad.setup_done_tick = sim.state.tick + setup_ticks(sim, sdef)
 
 
 # ---------------------------------------------------------------------------
@@ -220,16 +259,17 @@ def _rotate_toward(current: float, target: float, max_delta: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Team-weapon setup/teardown timing
+# Team-weapon setup/teardown timing (also used by Sim.spawn_squad: a freshly
+# spawned team weapon starts SETTING_UP)
 # ---------------------------------------------------------------------------
 
 
-def _weapon_setup_time(sim: "Sim", sdef) -> float:
+def weapon_setup_time(sim: "Sim", sdef) -> float:
     if not sdef.loadout:
         return 0.0
     weapon = sim.data.weapons.get(sdef.loadout[0])
     return weapon.setup_time if weapon is not None else 0.0
 
 
-def _setup_ticks(sim: "Sim", sdef) -> int:
-    return max(0, round(_weapon_setup_time(sim, sdef) * TICKS_PER_SECOND))
+def setup_ticks(sim: "Sim", sdef) -> int:
+    return max(0, math.ceil(weapon_setup_time(sim, sdef) * TICKS_PER_SECOND))

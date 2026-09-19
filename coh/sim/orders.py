@@ -269,6 +269,9 @@ def apply_garrison(sim: "Sim", order: Order) -> None:
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     building = sim.state.buildings[order.building_id]  # type: ignore[attr-defined]
     bdef = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
+    # `building_id` existence is validated above; a def_id with no matching
+    # data row shouldn't happen in practice, but garrison *legality* (can
+    # this squad garrison this building at all) is Task 12's job, not ours.
     footprint = bdef.footprint if bdef is not None else (1, 1)
     start_cell = cell_of(squad.pos)
     goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), building.cell, footprint, start_cell)
@@ -282,6 +285,9 @@ def apply_build(sim: "Sim", order: Order) -> None:
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     bdef = sim.data.buildings.get(order.structure)  # type: ignore[attr-defined]
+    # `structure` naming a real, buildable-by-this-squad def is Task 14's
+    # (production/construction) job to validate, not ours; we just need
+    # *some* footprint to compute a walk-to cell.
     footprint = bdef.footprint if bdef is not None else (1, 1)
     start_cell = cell_of(squad.pos)
     goal_cell = pathfinding.nearest_adjacent_passable(

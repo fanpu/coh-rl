@@ -210,8 +210,18 @@ def nearest_adjacent_passable(
 
 
 def find_path_cached(sim: "Sim", is_vehicle: bool, start: Cell, goal: Cell) -> list[Cell] | None:
-    """`find_path`, cached on `sim` by `(is_vehicle, start, goal, map.version)`."""
-    key = (is_vehicle, start, goal, sim.map.version)
+    """`find_path`, cached on `sim` by `(is_vehicle, start, goal)`.
+
+    The whole cache is dropped whenever `sim.map.version` has moved on since
+    it was last touched (any footprint stamp or terrain edit bumps it), so
+    entries never need `map.version` in the key and never accumulate stale
+    versions.
+    """
+    if sim._path_cache_version != sim.map.version:
+        sim._path_cache.clear()
+        sim._path_cache_version = sim.map.version
+
+    key = (is_vehicle, start, goal)
     cache = sim._path_cache
     if key in cache:
         return cache[key]
