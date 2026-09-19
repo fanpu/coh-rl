@@ -54,7 +54,7 @@ export function reset() {
   entities.setPulseSink(function (x, z, age) { effects.capturePulse(x, z, age); });
   built = true;
   resize();
-  camera.reset();
+  camera.opening(R.frames[0]);
 }
 
 export function resetCamera() {
@@ -112,7 +112,7 @@ export function render(head, squads, activeEffectsList) {
   camera.trackFollowed(squads, 1 / 60);
   scene.fitShadows(cam);
   scene.render(cam);
-  overlay.draw(cam, head.a, squads, buildings);
+  overlay.draw(cam, head.a, squads, buildings, shown);
 
   // the 2D view's `stats()` contract, filled from what actually got drawn
   const ent = entities.lastStats();

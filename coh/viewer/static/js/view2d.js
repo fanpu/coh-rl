@@ -690,6 +690,7 @@ function drawEffects(effects, frame) {
         explosion(e, frame, blastRadius(e, spec));
         if (spec.death) deathMark(e, frame);
       } else if (spec.mode === 'ripple') ripple(e, frame, spec.colour, spec.radius);
+      else if (spec.mode === 'badge') textBadge(e, frame, spec);
       else genericMark(e, frame);
     } catch (err) { /* an effect must never break the frame */ }
   });
@@ -761,6 +762,17 @@ function ripple(e, frame, colour, metres) {
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(p[0], p[1], metres * S.cam.scale * (0.3 + e.age), 0, 6.2832); ctx.stroke();
   ctx.globalAlpha = 1;
+}
+
+/** A word over the thing it happened to — for events with no visual of their
+ *  own, like a trained unit that has nowhere to stand. */
+function textBadge(e, frame, spec) {
+  const w = eventPos(e, frame);
+  if (!w) return;
+  const p = toScreen(w[0], w[1]);
+  // blink slowly rather than fade, so it is still readable late in its life
+  if (e.age > 0.5 && Math.floor(e.age * 8) % 2 === 0) return;
+  label(spec.text, p[0], p[1] - 18, spec.colour, '700 11px system-ui, sans-serif');
 }
 
 function genericMark(e, frame) {

@@ -125,8 +125,11 @@ function buildMaterials() {
   materials.smoke = new THREE.MeshBasicMaterial({
     transparent: true, opacity: 0.55, depthWrite: false
   });
+  /* Additive, so a round crossing grass reads as light rather than as a pale
+   * stick laid on top of it, and so overlapping fire brightens. */
   materials.tracer = new THREE.MeshBasicMaterial({
-    transparent: true, opacity: 0.95, depthWrite: false, fog: false, toneMapped: false
+    transparent: true, opacity: 0.95, depthWrite: false, fog: false,
+    toneMapped: false, blending: THREE.AdditiveBlending
   });
   materials.ring = new THREE.MeshBasicMaterial({
     color: 0xffe8b0, transparent: true, opacity: 0.8, depthWrite: false,

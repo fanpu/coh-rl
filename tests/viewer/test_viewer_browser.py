@@ -20,9 +20,9 @@ import pytest
 
 from tests.viewer.conftest import (  # noqa: F401  (fixtures are used by name)
     ACTION_MS,
-    DOC_IMAGES,
     canvas_digest,
     canvas_variance,
+    doc_image,
     needs_chromium,
     open_page,
     playwright_or_skip,
@@ -221,6 +221,7 @@ def test_every_unit_presentation_and_effect_renders(page, tmp_path):
     body = page.locator("#panel-body").inner_text()
     assert "Rifles" in body and "s left" in body, body
 
-    # keep the documented screenshot in step with the renderer
-    DOC_IMAGES.mkdir(parents=True, exist_ok=True)
-    shoot(page, DOC_IMAGES / "viewer-units.png")
+    # Keep the documented screenshot in step with the renderer — but only when
+    # asked, since a screenshot is never byte-identical between machines and
+    # rewriting it on every run leaves the tree dirty.
+    shoot(page, doc_image("viewer-units.png", tmp_path))

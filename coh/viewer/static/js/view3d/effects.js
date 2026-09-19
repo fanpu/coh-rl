@@ -179,7 +179,8 @@ export function update(effects, frame, tick) {
       if (spec.mode === 'tracer') tracer(e);
       else if (spec.mode === 'blast') blast(e, frame, spec);
       else if (spec.mode === 'ripple') rippleRing(e, frame, spec);
-      else marker(e, frame);
+      // 'badge' is a word, not a thing in the world: the overlay draws it
+      else if (spec.mode !== 'badge') marker(e, frame);
     } catch (err) { /* one bad event must never break the frame */ }
   }
   finish();
@@ -204,7 +205,7 @@ function tracer(e) {
   // the round travels the line over the effect's short life
   const u = Math.min(1, e.age * 1.25);
   const head = 0.12 + u * 0.88;
-  const tail = Math.max(0, head - 0.22);
+  const tail = Math.max(0, head - 0.13);
   const hx = lerp(a[0], bx, head), hz = lerp(a[1], bz, head);
   const tx = lerp(a[0], bx, tail), tz = lerp(a[1], bz, tail);
   const y = 1.05;
@@ -215,14 +216,32 @@ function tracer(e) {
   _dir.normalize();
   _q.setFromUnitVectors(_up, _dir);
   const fade = 1 - e.age;
-  _c.setStyle(d.hit ? '#ffe9a8' : '#e8cfa6').multiplyScalar(d.hit ? 1 : 0.55);
+  _c.setStyle(d.hit ? '#ffe9a8' : '#e8cfa6').multiplyScalar(d.hit ? 1 : 0.6);
   nT = put(tracers, nT, MAX_TRACERS, (hx + tx) / 2, y, (hz + tz) / 2,
-           0.09, len, 0.09, _q, _c);
+           0.115, len, 0.115, _q, _c);
 
-  // muzzle flash for the first instant of the shot
-  if (e.age < 0.34) {
-    const k = 1 - e.age / 0.34;
-    puff(true, a[0], y, a[1], 0.28 + k * 0.5, _c.copy(FIRE_HOT).multiplyScalar(0.6 + k * 0.4));
+  /* A short afterglow behind the round: dimmer, longer and a touch wider.
+   * On grass a single thin streak is easy to miss, and the trail is what
+   * makes the direction of fire readable. */
+  const gTail = Math.max(0, tail - 0.17);
+  const gx = lerp(a[0], bx, gTail), gz = lerp(a[1], bz, gTail);
+  _dir.set(tx - gx, 0, tz - gz);
+  const glowLen = _dir.length();
+  if (glowLen > 0.001) {
+    _dir.normalize();
+    _q.setFromUnitVectors(_up, _dir);
+    _c.multiplyScalar(0.22 * fade);
+    nT = put(tracers, nT, MAX_TRACERS, (tx + gx) / 2, y, (tz + gz) / 2,
+             0.19, glowLen, 0.19, _q, _c);
+  }
+
+  // muzzle flash for the first instant of the shot, additive like the round
+  if (e.age < 0.4) {
+    const k = 1 - e.age / 0.4;
+    _c.copy(FIRE_HOT).multiplyScalar(0.45 + k * 0.55);
+    _q.identity();
+    const flash = 0.28 + k * 0.5;
+    nT = put(tracers, nT, MAX_TRACERS, a[0], y, a[1], flash, flash, flash, _q, _c);
   }
   if (d.hit && e.age > 0.5) {
     puff(false, bx, 0.4, bz, 0.25 * fade + 0.1, _c.copy(SMOKE_A));

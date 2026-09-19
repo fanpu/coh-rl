@@ -113,6 +113,8 @@ SHOWCASE_JS = r"""(() => {
     {k: 'research_completed', t: f.t, d: {building: 915, upgrade: 'phase_2', owner: 0}},
     {k: 'upgrade_bought', t: f.t, d: {squad: 906, upgrade: 'bar', owner: 0}},
     {k: 'reinforced', t: f.t, d: {squad: 908, owner: 0, def_id: 'engineers'}},
+    // a trained unit with nowhere to stand: a word over the building, no map effect
+    {k: 'unit_blocked', t: f.t, d: {building: 913, unit: 'rifles', owner: 0}},
     {k: 'quantum_strike', t: f.t, d: {pos: [136, 76]}},
     {k: 'no_position_at_all', t: f.t, d: {}}
   ];
@@ -136,4 +138,4 @@ SHOWCASE_JS = r"""(() => {
   return f.events.length;
 })()"""
 
-SHOWCASE_EVENTS = 19
+SHOWCASE_EVENTS = 20

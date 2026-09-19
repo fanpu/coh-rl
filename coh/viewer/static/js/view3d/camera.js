@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import { S } from '../state.js';
-import { R } from '../data.js';
+import { R, teamOf } from '../data.js';
 import { clamp, lerp } from '../util.js';
 
 const MIN_DIST = 18;
@@ -47,6 +47,7 @@ function defaultPitch() {
   return lerp(NEAR_PITCH, FAR_PITCH, Math.pow(u, 0.7));
 }
 
+/** `Home`: the whole map at a glance. */
 export function reset() {
   const wm = R.W * R.CELL, hm = R.H * R.CELL;
   S.cam3.x = wm / 2;
@@ -56,6 +57,48 @@ export function reset() {
   S.cam3.follow = null;
   pitchOffset = 0;
   apply();
+}
+
+const OPENING_DIST = 76;
+
+/* Where the camera sits when the replay opens.
+ *
+ * Not the whole map: at that height a squad is a smudge, which is a poor
+ * first impression of a 3D view. Instead it looks down the axis from the
+ * watched team's HQ toward the middle of the map — the direction that team
+ * will actually push — from far enough back to see a sector and close enough
+ * that a squad reads as individual figures. `Home` still gives the map view.
+ */
+export function opening(frame) {
+  const wm = R.W * R.CELL, hm = R.H * R.CELL;
+  const mid = [wm / 2, hm / 2];
+  const hq = homeBase(frame);
+  const from = hq || mid;
+  // a third of the way in from the HQ, so the base is behind you
+  S.cam3.x = from[0] + (mid[0] - from[0]) * 0.34;
+  S.cam3.y = from[1] + (mid[1] - from[1]) * 0.34;
+  // face along that axis, so "up the screen" is the way forward
+  S.cam3.yaw = hq ? Math.atan2(mid[0] - from[0], mid[1] - from[1]) : 0;
+  S.cam3.dist = OPENING_DIST;
+  S.cam3.follow = null;
+  pitchOffset = 0;
+  apply();
+}
+
+/** The watched team's HQ, or its first building, or null. */
+function homeBase(frame) {
+  if (!frame) return null;
+  const team = S.fogMode > 0 ? S.fogMode - 1 : 0;
+  let fallback = null;
+  for (let i = 0; i < frame.buildings.length; i++) {
+    const b = frame.buildings[i];
+    if (b.nu || b.o === null || b.o === undefined) continue;
+    if (teamOf(b.o) !== team) continue;
+    const centre = [(b.cx + b.w / 2) * R.CELL, (b.cy + b.h / 2) * R.CELL];
+    if (/hq|headquarter/i.test(String(b.def))) return centre;
+    if (!fallback) fallback = centre;
+  }
+  return fallback;
 }
 
 /** Frame a world position at roughly the 2D view's zoom level. */

@@ -128,7 +128,10 @@ function start(payload) {
 
   resize();
   applyView();
-  resetCamera();
+  // Only the tactical map is framed here: the 3D view picks its own opening
+  // shot (over the watched team's HQ, looking toward the middle) in its
+  // `reset()` above, and `Home` is what gives the whole-map view.
+  view2d.resetCamera();
   // `#paused` opens on the first frame without starting playback, which is
   // what a deep link into a moment (and the headless browser check) wants.
   setPlaying(!hash.paused);

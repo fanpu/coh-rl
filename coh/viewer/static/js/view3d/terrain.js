@@ -31,7 +31,7 @@ let px = 8;            // ground-texture pixels per cell
 const TINT_PX = 8;     // territory/cover overlay pixels per cell
 let canvas = null, g2 = null, tex = null;
 let ground = null, tint = null, cover = null, fogPlane = null, surround = null;
-let roadField = null;  // per-cell road coverage, smoothed
+let roadField = null, shadeField = null, craterField = null, waterField = null;
 let features = null;   // the InstancedMesh group
 let tintKey = null, coverBuilt = false, fogBits = null;
 let materials = null;
@@ -63,63 +63,96 @@ function ch(cx, cy) {
   return R.terr[cy * R.W + cx];
 }
 
-/** Per-cell road coverage, blurred one cell out so road edges are soft. */
-function buildRoadField() {
+/* Ground influences are *fields*, not per-cell decisions.
+ *
+ * Painting "this cell is road, so darken this cell" puts a hard, cell-sized
+ * rectangle on the ground: it reads as a hole, and it hands the player the
+ * 2 m grid the sim is built on. Instead each character contributes to a
+ * blurred scalar field which is then sampled bilinearly per texel, so every
+ * transition is continuous and nothing on the ground is cell-shaped.
+ */
+function buildCellField(weight, passes) {
   const W = R.W, H = R.H;
   const raw = new Float32Array(W * H);
-  for (let i = 0; i < W * H; i++) raw[i] = R.terr[i] === 'r' ? 1 : 0;
-  const out = new Float32Array(W * H);
-  for (let cy = 0; cy < H; cy++) {
-    for (let cx = 0; cx < W; cx++) {
-      let sum = 0, n = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const x = cx + dx, y = cy + dy;
-          if (x < 0 || y < 0 || x >= W || y >= H) continue;
-          const w = (dx === 0 && dy === 0) ? 3 : 1;
-          sum += raw[y * W + x] * w; n += w;
+  for (let i = 0; i < W * H; i++) raw[i] = weight(R.terr[i]);
+  /* 3x3 tent blur. One pass already destroys the cell edge; a second widens
+   * the falloff, which is what a road verge wants and what a shell crater
+   * does not (two passes flatten a lone crater to nothing). */
+  let src = raw;
+  for (let pass = 0; pass < passes; pass++) {
+    const out = new Float32Array(W * H);
+    for (let cy = 0; cy < H; cy++) {
+      for (let cx = 0; cx < W; cx++) {
+        let sum = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const x = cx + dx, y = cy + dy;
+            if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            const w = (dx === 0 && dy === 0) ? 4 : 1;
+            sum += src[y * W + x] * w; n += w;
+          }
         }
+        out[cy * W + cx] = sum / n;
       }
-      out[cy * W + cx] = sum / n;
     }
+    src = out;
   }
-  roadField = out;
+  return src;
 }
 
-function roadAt(fx, fy) {
-  // bilinear sample of the smoothed field, in cell coordinates
+function buildFields() {
+  roadField = buildCellField(function (c) { return c === 'r' ? 1 : 0; }, 2);
+  shadeField = buildCellField(function (c) {
+    if (c === 'H' || c === 'T') return 1;       // leaf litter under the canopy
+    if (c === 'w' || c === 'f') return 0.45;    // the strip a wall shades
+    return 0;
+  }, 1);
+  craterField = buildCellField(function (c) { return c === 'c' ? 1 : 0; }, 1);
+  waterField = buildCellField(function (c) { return c === '~' ? 1 : 0; }, 1);
+}
+
+function sample(field, fx, fy) {
   const x = fx - 0.5, y = fy - 0.5;
   const ix = Math.floor(x), iy = Math.floor(y);
   const tx = x - ix, ty = y - iy;
   function at(cx, cy) {
     if (cx < 0 || cy < 0 || cx >= R.W || cy >= R.H) return 0;
-    return roadField[cy * R.W + cx];
+    return field[cy * R.W + cx];
   }
   return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) +
          (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
 }
 
+/** Hermite ramp — every blend below goes through this, so no hard seams. */
+function smoothstep(a, b, v) {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
 const _rgb = [0, 0, 0];
 
-/** The ground colour for one texel, in cell coordinates. */
+/** The ground colour for one texel, in cell coordinates.
+ *
+ *  Every term here is either continuous noise or a bilinear sample of a
+ *  blurred field, and every blend goes through `smoothstep`. Nothing steps.
+ */
 function groundTexel(fx, fy, out) {
-  const cx = Math.floor(fx), cy = Math.floor(fy);
-  const c = ch(cx, cy);
-
   // large slow variation: dry patches and ploughed fields
   const broad = noise(fx, fy, 11, 3) * 0.65 + noise(fx, fy, 31, 5) * 0.35;
-  const field = noise(fx, fy, 23, 9);
+  const field = noise(fx, fy, 23, 9) * 0.8 + noise(fx, fy, 6.5, 11) * 0.2;
   const fine = noise(fx, fy, 2.6, 17) * 0.45 + noise(fx, fy, 0.8, 23) * 0.35 +
                noise(fx, fy, 0.3, 29) * 0.20;
 
-  // Grass dominates; dry ground and ploughed fields are the exception, not
-  // the rule, or the whole map reads as desert rather than Normandy.
-  const ploughed = field > 0.78;
-  let mixB = GRASS_DRY;
-  let k = Math.min(0.42, Math.max(0, broad - 0.56) * 1.2);
-  if (ploughed) { mixB = FIELD; k = Math.min(0.62, (field - 0.78) * 2.6); }
-
-  for (let i = 0; i < 3; i++) out[i] = GRASS[i] + (mixB[i] - GRASS[i]) * k;
+  /* Grass dominates; dry ground and ploughed fields are the exception, not
+   * the rule, or the whole map reads as desert rather than Normandy. Both
+   * are ramped in, so a field has an edge of scrub rather than a fence-line
+   * seam where the noise crossed a threshold. */
+  const dry = smoothstep(0.50, 0.84, broad) * 0.5;
+  const plough = smoothstep(0.70, 0.90, field) * 0.55;
+  for (let i = 0; i < 3; i++) {
+    let v = GRASS[i] + (GRASS_DRY[i] - GRASS[i]) * dry;
+    out[i] = v + (FIELD[i] - v) * plough;
+  }
 
   // Fine grain only. A periodic furrow pattern was tried here and had to go:
   // at any distance its ~1-cell period aliased through the mipmaps into
@@ -127,33 +160,42 @@ function groundTexel(fx, fy, out) {
   const grain = (fine - 0.5) * 21;
   for (let i = 0; i < 3; i++) out[i] += grain;
 
-  /* Roads: dirt with soft, noise-jittered edges and darker ruts. The
-   * threshold has to sit well above the blur's spill, or a two-cell lane
-   * smears into a ten-cell brown river that wanders with the noise. */
-  const road = roadAt(fx, fy) + (fine - 0.5) * 0.08;
-  if (road > 0.34) {
-    const t = Math.min(1, (road - 0.34) / 0.3);
-    // Mottled wear rather than a regular rut pattern: anything periodic here
-    // comes out as a ladder of sleepers at map zoom.
-    const wear = noise(fx * 2.2, fy * 0.5, 1.4, 37);
-    const dirt = wear > 0.62 ? MUD : DIRT;
-    for (let i = 0; i < 3; i++) out[i] += (dirt[i] + (fine - 0.5) * 16 - out[i]) * t;
+  /* Lanes. The blurred road field is jittered by fine noise and ramped, so
+   * the verge is ragged rather than straight, and the wear along it is a
+   * continuous blend between packed dirt and mud — an earlier hard threshold
+   * here put dark, cell-sized rectangles down the middle of every road. */
+  const road = sample(roadField, fx, fy) + (fine - 0.5) * 0.09;
+  const onRoad = smoothstep(0.30, 0.62, road);
+  if (onRoad > 0.002) {
+    const wear = noise(fx, fy, 3.4, 37) * 0.6 + noise(fx, fy, 1.1, 43) * 0.4;
+    const mud = smoothstep(0.45, 0.78, wear);
+    for (let i = 0; i < 3; i++) {
+      const dirt = DIRT[i] + (MUD[i] - DIRT[i]) * mud + (fine - 0.5) * 16;
+      out[i] += (dirt - out[i]) * onRoad;
+    }
   }
 
-  if (c === '~') {
+  // shaded, leaf-littered ground under canopy and along walls
+  const shaded = sample(shadeField, fx, fy);
+  if (shaded > 0.002) {
+    const k = smoothstep(0.03, 0.30, shaded) * 0.34;
+    for (let i = 0; i < 3; i++) out[i] *= 1 - k;
+  }
+
+  // shell craters: scorched bowls that merge where they overlap
+  const pit = sample(craterField, fx, fy) + (fine - 0.5) * 0.12;
+  if (pit > 0.02) {
+    const k = smoothstep(0.04, 0.29, pit) * 0.88;
+    for (let i = 0; i < 3; i++) out[i] += (SCORCH[i] - out[i]) * k;
+  }
+
+  const wet = sample(waterField, fx, fy);
+  if (wet > 0.02) {
+    const k = smoothstep(0.06, 0.30, wet);
     const ripple = noise(fx, fy, 2.5, 41);
-    for (let i = 0; i < 3; i++) out[i] = WATER[i] + (ripple - 0.5) * 18;
-  } else if (c === 'c') {
-    // crater: a scorched bowl, darkest in the middle
-    const dx = fx - cx - 0.5, dy = fy - cy - 0.5;
-    const r = Math.min(1, Math.hypot(dx, dy) / 0.55);
-    const t = (1 - r * r) * 0.85;
-    for (let i = 0; i < 3; i++) out[i] += (SCORCH[i] - out[i]) * t;
-  } else if (c === 'H' || c === 'T') {
-    // shaded, leaf-littered ground under the canopy
-    for (let i = 0; i < 3; i++) out[i] *= 0.7;
-  } else if (c === 'w' || c === 'f') {
-    for (let i = 0; i < 3; i++) out[i] *= 0.88;
+    for (let i = 0; i < 3; i++) {
+      out[i] += (WATER[i] + (ripple - 0.5) * 18 - out[i]) * k;
+    }
   }
   return out;
 }
@@ -184,7 +226,7 @@ function paintCells(x0, y0, x1, y1) {
 /** Repaint the cells touched by a terrain delta, plus a one-cell margin. */
 function repaintRegion(cells) {
   if (!canvas || !cells.length) return;
-  buildRoadField();
+  buildFields();
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   cells.forEach(function (c) {
     x0 = Math.min(x0, c[0] - 1); y0 = Math.min(y0, c[1] - 1);
@@ -271,7 +313,7 @@ function paintTint(frame) {
       if (cy - 1 < 0 || R.sectorCells[(cy - 1) * W + cx] !== s) seg(col, x, y + inset, x + per, y + inset);
     }
   }
-  g.globalAlpha = 0.38;
+  g.globalAlpha = 0.26;
   g.lineWidth = Math.max(1.3, per * 0.3);
   g.lineCap = 'square';
   for (const colour in paths) {
@@ -519,7 +561,7 @@ export function build(scene, mats) {
   materials = mats;
   px = S.quality === 'low' ? 4 : 8;
 
-  buildRoadField();
+  buildFields();
   canvas = document.createElement('canvas');
   canvas.width = R.W * px; canvas.height = R.H * px;
   g2 = canvas.getContext('2d');

@@ -84,6 +84,18 @@ const CHARCOAL = '#25231f';
 /** Faction colour, pulled well down so the field reads as WW2 rather than neon. */
 function warpaint(colour) { return mix(colour, '#4c4c46', 0.78); }
 
+/* The uniform is muted, but a squad has to be *identifiable* from the default
+ * camera height, so the shoulders and a helmet band carry a deep, saturated
+ * version of the team colour. Deep, not bright: lightening a saturated hue
+ * gives pastel toy soldiers, while darkening it keeps the contrast against
+ * grass without leaving the WW2 palette. */
+function accent(colour) { return mix(colour, '#2b2b26', 0.34); }
+
+/** The steel itself: US olive drab, Wehrmacht field grey, faintly team-tinted. */
+function helmetSteel(colour, faction) {
+  return mix(colour, faction === 'wehr' ? '#585b52' : '#5c6040', 0.7);
+}
+
 // ------------------------------------------------------------- buildings --
 
 /* `ctx` for a building:
@@ -244,16 +256,21 @@ function rubble(ctx) {
 function DEFAULT_SOLDIER(ctx) {
   const p = new Parts();
   const coat = warpaint(ctx.colour);
-  p.box(0.34, 0.55, 0.26, shade(coat, -0.22), { y: 0.3 });                // legs
-  p.box(0.42, 0.62, 0.30, coat, { y: 0.92 });                             // torso
-  p.box(0.12, 0.5, 0.12, shade(coat, -0.1), { x: 0.14, y: 0.95, rz: -0.35 });  // arms
-  p.box(0.12, 0.5, 0.12, shade(coat, -0.1), { x: -0.06, y: 0.95, rz: 0.2 });
-  p.sphere(0.13, '#9a7a5e', { y: 1.33 });                                 // head
-  p.add(cyl(0.17, 0.19, 0.13, 8), shade(coat, 0.12), { y: 1.42 });        // helmet
-  p.box(0.06, 0.06, 0.06, shade(coat, 0.12), { y: 1.36, sx: 5.5, sz: 5.5, sy: 0.6 });
-  p.box(0.78, 0.05, 0.05, '#3a2c1f', { x: 0.28, y: 1.02, rz: -0.12 });    // rifle
-  p.box(0.22, 0.09, 0.05, '#4a3826', { x: 0.02, y: 1.05, rz: -0.12 });
-  p.box(0.3, 0.34, 0.16, shade(OLIVE, -0.1), { x: -0.24, y: 0.98 });      // pack
+  const flash = accent(ctx.colour);
+  const steel = helmetSteel(ctx.colour, ctx.faction);
+  p.box(0.36, 0.55, 0.28, shade(coat, -0.26), { y: 0.3 });                // legs
+  p.box(0.46, 0.64, 0.34, coat, { y: 0.93 });                             // torso
+  // team-coloured shoulders: the widest thing on the figure seen from above
+  p.box(0.62, 0.15, 0.36, flash, { y: 1.19 });
+  p.box(0.13, 0.5, 0.13, shade(coat, -0.12), { x: 0.16, y: 0.95, rz: -0.35 });  // arms
+  p.box(0.13, 0.5, 0.13, shade(coat, -0.12), { x: -0.07, y: 0.95, rz: 0.2 });
+  p.sphere(0.13, '#9a7a5e', { y: 1.36 });                                 // head
+  p.add(cyl(0.21, 0.24, 0.17, 8), steel, { y: 1.47 });                    // helmet
+  p.add(cyl(0.3, 0.3, 0.05, 8), shade(steel, -0.18), { y: 1.39 });        // its brim
+  p.box(0.26, 0.09, 0.26, flash, { y: 1.55 });                            // team band
+  p.box(0.84, 0.06, 0.06, '#33261b', { x: 0.3, y: 1.02, rz: -0.12 });     // rifle
+  p.box(0.24, 0.1, 0.06, '#4a3826', { x: 0.02, y: 1.05, rz: -0.12 });
+  p.box(0.32, 0.36, 0.18, shade(OLIVE, -0.1), { x: -0.26, y: 0.99 });     // pack
   return p;
 }
 
