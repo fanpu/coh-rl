@@ -14,6 +14,7 @@ import numpy as np
 from coh.data.schema import BuildingDef, GameData
 from coh.maps.format import GameMap, StartDef, center_of
 from coh.sim import orders as orders_mod
+from coh.sim import pathfinding
 from coh.sim import systems
 from coh.sim.orders import Order, OrderResult
 from coh.sim.state import (
@@ -95,6 +96,10 @@ class Sim:
 
         self._setup_players()
         self._place_neutral_buildings()
+        # The opening state is a state agents observe and order against, so
+        # its visibility has to be real: without this every `Attack` issued
+        # before the first `tick()` was refused as "not visible".
+        systems.vision.run(self)
 
     # -- setup -----------------------------------------------------------
 
@@ -126,7 +131,8 @@ class Sim:
             start = starts[setup.start_slot]  # `_compute_hq_sectors` validated the slot
 
             hq_def = self._hq_def(setup.faction)
-            hq = self.spawn_building(player_id, hq_def.id, start.hq_cell)
+            hq_cell = self._hq_footprint_cell(start.hq_cell, hq_def.footprint)
+            hq = self.spawn_building(player_id, hq_def.id, hq_cell)
             self.state.players[player_id] = Player(
                 id=player_id,
                 team=setup.team,
@@ -139,7 +145,7 @@ class Sim:
             self.spawn_squad(
                 player_id,
                 self._builder_def_id(setup.faction),
-                center_of(self._builder_cell(start.hq_cell, hq_def.footprint)),
+                center_of(self._builder_cell(hq_cell, hq_def.footprint)),
             )
             self._claim_hq_sector(start, setup.team)
 
@@ -171,17 +177,46 @@ class Sim:
             return builders[0]
         raise SimError("no squad def can construct buildings; cannot place a starting builder")
 
-    def _builder_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
-        """Nearest infantry-passable cell south of the HQ footprint."""
-        cx0, cy0 = hq_cell
+    def _hq_footprint_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
+        """Top-left cell of an HQ footprint *centred* on the start's `hq_cell`.
+
+        Anchoring the footprint top-left made the two seats of a symmetric map
+        asymmetric: with a 4x4 HQ the south-east seat sat two cells deeper in
+        its corner than the north-west one, which is a real bias in a mirror
+        match. Centring costs one convention, documented here for map authors:
+
+        - an **odd** footprint side is centred exactly on `hq_cell`, so the
+          two seats line up when their `hq_cell`s are images of each other
+          under `x -> width - 1 - x` (the cell-grid reversal);
+        - an **even** side has no centre cell, and `hq_cell` names the cell
+          just past the middle (offset `n // 2`), so the two seats line up
+          when their `hq_cell`s are images under `x -> width - x`.
+
+        Either way the offset is `footprint // 2`. A footprint that would fall
+        off the map is clamped back on; on a symmetric map both seats clamp by
+        the same amount in opposite directions, so the symmetry survives.
+        """
         w, h = footprint
-        centre_x = cx0 + (w - 1) / 2
-        columns = sorted(range(self.map.width), key=lambda cx: (abs(cx - centre_x), cx))
-        for cy in range(cy0 + h, self.map.height):
-            for cx in columns:
-                if self.map.pass_inf[cy, cx]:
-                    return (cx, cy)
-        raise SimError(f"no infantry-passable cell south of the HQ footprint at {hq_cell}")
+        cx = min(max(hq_cell[0] - w // 2, 0), max(self.map.width - w, 0))
+        cy = min(max(hq_cell[1] - h // 2, 0), max(self.map.height - h, 0))
+        return (cx, cy)
+
+    def _builder_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
+        """Infantry-passable cell beside the HQ, on the side facing the map centre.
+
+        "South of the footprint" pointed the north-west seat's builder at the
+        middle of the map and the south-east seat's away from it — a measured
+        13 m head start for seat 0.
+        """
+        cell = pathfinding.adjacent_cell_toward(
+            self.map.pass_inf,
+            hq_cell,
+            footprint,
+            pathfinding.grid_centre(self.map.width, self.map.height),
+        )
+        if cell is None:
+            raise SimError(f"no infantry-passable cell anywhere near the HQ footprint at {hq_cell}")
+        return cell
 
     def _claim_hq_sector(self, start: StartDef, team: int) -> None:
         """A team owns its HQ sector's point from the start."""

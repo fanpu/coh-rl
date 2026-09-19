@@ -1104,6 +1104,7 @@ var EFFECTS = {
   building_completed: { ticks: 16, draw: function (e, f) { ripple(e, f, '#7fbf6a', 6); } },
   research_completed: { ticks: 16, draw: function (e, f) { ripple(e, f, '#9fc4e8', 5); } },
   upgrade_bought: { ticks: 14, draw: function (e, f) { ripple(e, f, '#d8b45a', 2.5); } },
+  unit_blocked: { ticks: 1, draw: null },        // a stalled build queue: nothing happens on the map
   point_captured: { ticks: 16, draw: null },     // pulse drawn with the point
   point_neutralized: { ticks: 16, draw: null },  // pulse drawn with the point
   game_over: { ticks: 1, draw: null }            // winner banner, see updateHud

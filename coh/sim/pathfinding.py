@@ -186,6 +186,55 @@ def adjacent_cells(cell: Cell, size: tuple[int, int], width: int, height: int) -
     return cells
 
 
+def grid_centre(width: int, height: int) -> tuple[float, float]:
+    """The map's centre in cell coordinates — the fixed point of the 180-degree
+    rotation `(cx, cy) -> (width - 1 - cx, height - 1 - cy)` that maps a
+    symmetric map onto itself."""
+    return ((width - 1) / 2.0, (height - 1) / 2.0)
+
+
+def adjacent_cell_toward(
+    passable: np.ndarray,
+    footprint_cell: Cell,
+    size: tuple[int, int],
+    toward: tuple[float, float],
+) -> Cell | None:
+    """The passable cell bordering the footprint that lies nearest `toward`.
+
+    Used for anything that has to step out of a building on the side facing
+    somewhere (the map centre, for a starting builder or a rally point).
+
+    Ties break in a frame anchored on the footprint and pointing at `toward`
+    — first the candidate furthest *along* that direction, then the one
+    furthest to its left — rather than on raw `(cy, cx)`. Both of those
+    quantities are unchanged when the whole picture is rotated 180 degrees
+    about `toward`, so two seats facing each other across a symmetric map
+    pick cells that are exact images of each other; a `(cy, cx)` tie-break
+    would quietly favour the northern seat.
+
+    Falls back to the nearest passable cell to the footprint's centre when
+    the whole ring is blocked, exactly like `nearest_adjacent_passable`.
+    """
+    height, width = passable.shape
+    cx0, cy0 = footprint_cell
+    w, h = size
+    candidates = [c for c in adjacent_cells(footprint_cell, size, width, height) if passable[c[1], c[0]]]
+    if not candidates:
+        centre = (cx0 + (w - 1) // 2, cy0 + (h - 1) // 2)
+        return _nearest_passable(passable, centre)
+
+    tx, ty = toward
+    qx, qy = cx0 + (w - 1) / 2.0, cy0 + (h - 1) / 2.0
+    dx, dy = tx - qx, ty - qy
+
+    def key(cell: Cell) -> tuple[float, float, float]:
+        ox, oy = cell[0] - qx, cell[1] - qy
+        d2 = (cell[0] - tx) ** 2 + (cell[1] - ty) ** 2
+        return (d2, -(ox * dx + oy * dy), ox * dy - oy * dx)
+
+    return min(candidates, key=key)
+
+
 def nearest_adjacent_passable(
     passable: np.ndarray, footprint_cell: Cell, size: tuple[int, int], from_cell: Cell
 ) -> Cell | None:

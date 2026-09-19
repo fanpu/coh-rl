@@ -232,7 +232,10 @@ def test_terrain_delta_appears_when_a_vehicle_crushes_a_fence():
 
     frames = build_frames(env.to_replay(), EVERY, data=data, game_map=game_map)
     deltas = [delta for frame in frames["frames"] for delta in frame["terrain_delta"]]
-    assert deltas == [[20, 14, "."]]
+    # (20, 11) rather than (20, 14): a trained unit now rallies on the side of
+    # its building that faces the map centre, so the tank starts its drive a
+    # few cells further north and crushes a different fence cell.
+    assert deltas == [[20, 11, "."]]
     # and the delta is reported once, on the frame that covers the crush
     carrying = [f for f in frames["frames"] if f["terrain_delta"]]
     assert len(carrying) == 1

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from coh.maps.format import GameMap, cell_of, center_of
+from coh.sim.pathfinding import adjacent_cells
 from coh.sim import orders as orders_mod
 from coh.sim import systems
 from coh.sim.orders import (
@@ -82,7 +83,19 @@ def test_sim_owns_a_private_copy_of_the_map():
     assert game_map.pass_inf[hq_y, hq_x]  # the caller's map is not stamped
 
 
-def test_builder_spawns_just_south_of_the_hq_footprint():
+def test_hq_footprint_is_centred_on_the_starts_hq_cell():
+    """`StartDef.hq_cell` names the middle of the HQ, not its top-left corner:
+    anchoring it top-left buried one seat two cells deeper in its corner than
+    the other on an otherwise symmetric map."""
+    sim = make_sim()
+    for player_id, player in sim.state.players.items():
+        hq = sim.state.buildings[player.hq_id]
+        w, h = sim.data.buildings[hq.def_id].footprint
+        anchor = sim.map.starts[sim.player_setups[player_id].start_slot].hq_cell
+        assert hq.cell == (anchor[0] - w // 2, anchor[1] - h // 2)
+
+
+def test_builder_spawns_on_the_side_of_the_hq_facing_the_map_centre():
     sim = make_sim()
     hq = sim.state.buildings[sim.state.players[0].hq_id]
     cx, cy = hq.cell
@@ -90,9 +103,51 @@ def test_builder_spawns_just_south_of_the_hq_footprint():
     builder = next(s for s in sim.state.squads.values() if s.owner == 0)
 
     bx, by = cell_of(builder.pos)
-    assert by == cy + h
-    assert cx <= bx < cx + w
     assert sim.map.pass_inf[by, bx]
+    assert (bx, by) in adjacent_cells((cx, cy), (w, h), sim.map.width, sim.map.height)
+    # Player 0's HQ is in the north-west: the centre lies south-east of it.
+    assert bx >= cx + w - 1 and by >= cy + h - 1
+
+
+def _mirror_map(width=40, height=30, hq=(8, 6)):
+    """A map that is its own 180-degree rotation, with the two `hq_cell`s
+    placed as rotational images (see `Sim._hq_footprint_cell` for the
+    convention an even footprint needs)."""
+    return make_map(
+        ["." * width] * height,
+        sectors=["a" * 14 + "b" * 12 + "c" * 14] * height,
+        points=[
+            {"id": "west", "name": "West", "type": "strategic", "cell": [6, 7]},
+            {"id": "mid", "name": "Mid", "type": "victory", "cell": [width // 2, height // 2]},
+            {"id": "east", "name": "East", "type": "strategic", "cell": [width - 1 - 6, height - 1 - 7]},
+        ],
+        starts=[
+            {"slot": 0, "team": 0, "hq_cell": list(hq), "sector": "a"},
+            {"slot": 1, "team": 1, "hq_cell": [width - hq[0], height - hq[1]], "sector": "c"},
+        ],
+    )
+
+
+def test_the_two_seats_are_exact_180_degree_images_on_a_symmetric_map():
+    """Seat asymmetry is a silent bias in every mirror match: the HQ
+    footprint and the starting builder must rotate onto each other."""
+    sim = make_sim(game_map=_mirror_map())
+    w, h = sim.map.width, sim.map.height
+
+    def rotate(cells):
+        return {(w - 1 - cx, h - 1 - cy) for cx, cy in cells}
+
+    def hq_cells(player_id):
+        hq = sim.state.buildings[sim.state.players[player_id].hq_id]
+        fw, fh = sim.data.buildings[hq.def_id].footprint
+        return {(hq.cell[0] + dx, hq.cell[1] + dy) for dx in range(fw) for dy in range(fh)}
+
+    def builder_cell(player_id):
+        squad = next(s for s in sim.state.squads.values() if s.owner == player_id)
+        return cell_of(squad.pos)
+
+    assert rotate(hq_cells(0)) == hq_cells(1)
+    assert rotate({builder_cell(0)}) == {builder_cell(1)}
 
 
 def test_points_start_neutral_except_hq_sectors():

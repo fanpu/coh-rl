@@ -249,7 +249,7 @@ def test_second_observation_post_on_the_same_point_is_rejected():
 # ---------------------------------------------------------------------------
 
 
-def test_train_deducts_queues_and_spawns_south_of_the_building():
+def test_train_deducts_queues_and_spawns_beside_the_building():
     sim = make_sim()
     player = _rich(sim)
     hq = sim.state.buildings[player.hq_id]
@@ -268,8 +268,39 @@ def test_train_deducts_queues_and_spawns_south_of_the_building():
     trained = sim.state.squads[event.data["squad"]]
     assert trained.def_id == "engineers"
     assert trained.state is SquadState.IDLE
-    # HQ footprint (2,2)+4x4 -> bottom-centre south cell is (3, 6).
-    assert (int(trained.pos[0] // 2), int(trained.pos[1] // 2)) == (3, 6)
+    # HQ footprint (0,0)+4x4 (centred on the start's hq_cell (2,2)); the rally
+    # cell is the footprint-adjacent cell nearest the map centre (19.5, 14.5).
+    assert (int(trained.pos[0] // 2), int(trained.pos[1] // 2)) == (4, 4)
+
+
+def test_a_unit_with_nowhere_to_stand_waits_at_the_head_of_the_queue(monkeypatch):
+    """The trained squad was paid for: a blocked rally point must not eat it."""
+    from coh.sim.systems import production
+
+    sim = make_sim()
+    player = _rich(sim)
+    hq = sim.state.buildings[player.hq_id]
+    assert sim.issue(0, [Train(building=hq.id, unit="engineers")])[0].ok
+
+    monkeypatch.setattr(production, "_rally_cell", lambda sim, building, is_vehicle: None)
+    squads_before = set(sim.state.squads)
+    sim.run(15 * 8)  # engineers build_time 15 s
+
+    assert [(q.kind, q.item_id) for q in hq.queue] == [("train", "engineers")]
+    assert set(sim.state.squads) == squads_before
+    blocked = [e for e in sim.state.events if e.kind == "unit_blocked"]
+    assert len(blocked) == 1
+    assert blocked[0].data == {"building": hq.id, "unit": "engineers", "owner": 0}
+
+    # ... and it keeps waiting, without announcing itself over and over.
+    sim.run(20)
+    assert hq.queue and not [e for e in sim.state.events if e.kind == "unit_blocked"]
+
+    # Room again: the unit comes out on the next tick, still only paid for once.
+    monkeypatch.undo()
+    sim.tick()
+    assert hq.queue == []
+    assert set(sim.state.squads) - squads_before
 
 
 def test_queue_processes_the_head_only_and_in_order():
