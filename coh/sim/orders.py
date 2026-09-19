@@ -253,6 +253,39 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, goal_cell, SquadState.RETREATING)
 
 
+def validate_attack(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    """The target must exist, be an enemy squad/building, and be visible now.
+
+    Neutral (enterable) buildings are not attackable in M1.
+    """
+    from coh.sim.systems import vision
+
+    target_id = order.target_id  # type: ignore[attr-defined]
+    entity = sim.state.squads.get(target_id) or sim.state.buildings.get(target_id)
+    if entity is None:
+        return OrderResult(False, f"no such target {target_id}")
+
+    building = sim.state.buildings.get(target_id)
+    if building is not None and building.neutral:
+        return OrderResult(False, f"building {target_id} is neutral and cannot be attacked")
+
+    owner = sim.state.players.get(entity.owner) if entity.owner is not None else None
+    if owner is not None and owner.team == player.team:
+        return OrderResult(False, f"target {target_id} is not an enemy of player {player.id}")
+
+    if not vision.is_visible(sim, player.team, entity):
+        return OrderResult(False, f"target {target_id} is not visible to team {player.team}")
+    return OK
+
+
+def apply_attack(sim: "Sim", order: Order) -> None:
+    """Store the order; combat picks the target up on its next tick."""
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    squad.order = order
+    squad.target_id = None
+    squad.path = []
+
+
 def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:
     if order.point_id not in sim.map.points:  # type: ignore[attr-defined]
         return OrderResult(False, f"no such point {order.point_id!r}")  # type: ignore[attr-defined]
@@ -320,7 +353,7 @@ class OrderHandler:
 ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
     Move: OrderHandler(_accept, apply_move),
     AttackMove: OrderHandler(_accept, apply_attack_move),
-    Attack: OrderHandler(_accept, apply_squad_order),
+    Attack: OrderHandler(validate_attack, apply_attack),
     Capture: OrderHandler(validate_capture, apply_capture),
     Garrison: OrderHandler(validate_garrison, apply_garrison),
     Ungarrison: OrderHandler(_accept, apply_squad_order),
