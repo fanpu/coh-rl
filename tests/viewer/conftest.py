@@ -1,6 +1,10 @@
-"""Replays the viewer tests build frames from."""
+"""Replays the viewer tests build frames from, plus a hard per-test deadline."""
 
 from __future__ import annotations
+
+import contextlib
+import signal
+import threading
 
 import pytest
 
@@ -44,3 +48,39 @@ def play(seconds: float, agent: str = "t1", seed: int = 0) -> Replay:
 def short_replay() -> Replay:
     """A 30 s scripted match — long enough for captures, shots and training."""
     return play(SHORT_MATCH_S)
+
+
+# ---------------------------------------------------------------------------
+# Hard deadline
+# ---------------------------------------------------------------------------
+
+# Playwright's sync `evaluate()` has no timeout of its own: if the page's main
+# thread wedges, the call blocks forever and takes the whole suite with it.
+# This is the backstop — a test that blows its budget fails loudly instead of
+# stalling. SIGALRM only fires on the main thread of a POSIX process, so on
+# anything else the guard is a no-op and the per-call Playwright timeouts are
+# the only protection.
+_CAN_ALARM = hasattr(signal, "SIGALRM")
+
+
+class DeadlineExceeded(AssertionError):
+    pass
+
+
+@contextlib.contextmanager
+def deadline(seconds: float, what: str):
+    """Fail the test if the body has not finished within `seconds`."""
+    if not _CAN_ALARM or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def fire(signum, frame):
+        raise DeadlineExceeded(f"{what} exceeded its {seconds:g}s deadline")
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)

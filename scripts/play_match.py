@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--p0", default="t1", choices=sorted(AGENTS), help="player 0's agent")
     parser.add_argument("--p1", default="t0", choices=sorted(AGENTS), help="player 1's agent")
     parser.add_argument("--f0", default="us", help="player 0's faction")
-    parser.add_argument("--f1", default="us", help="player 1's faction")
+    parser.add_argument("--f1", default="wehr", help="player 1's faction")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--decision-interval", type=float, default=2.0, help="seconds of game time per step")
     parser.add_argument("--time-limit", type=float, default=SimConfig().time_limit_s, help="seconds")

@@ -31,6 +31,7 @@ var UNKNOWN_TERRAIN = { base: '#6a3a6a', name: 'Unknown' };
 var COVER = { '.': 0, 'r': 0, 'c': 2, 'f': 1, 'w': 2, 'H': 2, 'T': 1, '~': 0 };
 
 var ACRONYMS = { hmg: 'HMG', at: 'AT', mg: 'MG', hq: 'HQ', op: 'OP', us: 'US', vp: 'VP', aa: 'AA' };
+var FACTION_NAMES = { us: 'US', wehr: 'Wehrmacht' };
 
 var TILE = 8;          // offscreen terrain resolution, px per cell
 var SPEEDS = [0.5, 1, 2, 4, 8, 16];
@@ -85,6 +86,10 @@ function title(id) {
     if (ACRONYMS[w.toLowerCase()]) return ACRONYMS[w.toLowerCase()];
     return w.charAt(0).toUpperCase() + w.slice(1);
   }).join(' ');
+}
+
+function factionName(faction) {
+  return FACTION_NAMES[faction] || title(faction) || '?';
 }
 
 function mmss(seconds) {
@@ -166,7 +171,10 @@ function boot() {
     buildLegend();
     resize();
     resetCamera();
-    setPlaying(true);
+    // `#paused` opens on the first frame without starting playback, which is
+    // what a deep link into a moment (and the headless browser check) wants.
+    setPlaying(window.location.hash.indexOf('paused') < 0);
+    requestRender();
   }).catch(function (err) {
     fail(String(err && err.message ? err.message : err));
   });
@@ -215,8 +223,8 @@ function prepare() {
   frames.forEach(function (f, i) {
     (f.events || []).forEach(function (e) {
       allEvents.push({ k: e.k, t: e.t, d: e.d || {}, i: i });
-      if (e.k === 'point_captured' || e.k === 'point_neutralized') markers.push({ t: e.t, c: '#d8b45a' });
-      else if (e.k === 'squad_destroyed' || e.k === 'building_destroyed') markers.push({ t: e.t, c: '#e2705f' });
+      var colour = MARKER_COLOURS[e.k];
+      if (colour) markers.push({ t: e.t, c: colour });
     });
   });
   allEvents.sort(function (a, b) { return a.t - b.t; });
@@ -530,6 +538,7 @@ function lastTick() { return frameTicks[frameTicks.length - 1]; }
 // ------------------------------------------------------------------- draw --
 
 function drawPoints(frame, now) {
+  var footprints = buildingRects(frame);
   var pulses = {};
   now.forEach(function (e) {
     if (e.k === 'point_captured' || e.k === 'point_neutralized') pulses[e.d.point_id] = e.age;
@@ -570,7 +579,8 @@ function drawPoints(frame, now) {
     ctx.restore();
 
     if (showSectors && cam.scale > 2.2) {
-      label(def.name || title(def.id), p[0], p[1] + r + 14, '#efe9d8', '600 11px system-ui, sans-serif');
+      placeLabel(def.name || title(def.id), p[0], p[1], r, '#efe9d8',
+                 '600 11px system-ui, sans-serif', footprints);
     }
   });
 }
@@ -689,13 +699,14 @@ function badge(x, y, text, colour) {
 /** Centred text with a dark halo so it stays legible over any terrain.
  *  Labels that would collide with one already placed this frame are dropped,
  *  which keeps a crowded map readable. */
-function label(text, x, y, colour, font) {
+function label(text, x, y, colour, font, avoid) {
   ctx.save();
   ctx.font = font || '10px system-ui, sans-serif';
   var w = ctx.measureText(text).width;
   var box = [x - w / 2 - 2, y - 10, x + w / 2 + 2, y + 3];
-  for (var i = 0; i < labelBoxes.length; i++) {
-    var o = labelBoxes[i];
+  var blockers = avoid ? labelBoxes.concat(avoid) : labelBoxes;
+  for (var i = 0; i < blockers.length; i++) {
+    var o = blockers[i];
     if (box[0] < o[2] && o[0] < box[2] && box[1] < o[3] && o[1] < box[3]) { ctx.restore(); return false; }
   }
   labelBoxes.push(box);
@@ -708,6 +719,33 @@ function label(text, x, y, colour, font) {
   ctx.fillText(text, x, y);
   ctx.restore();
   return true;
+}
+
+/** Label a map feature, trying below / above / right / left of it until a
+ *  position is free — an HQ point's name must not end up under the HQ. */
+function placeLabel(text, x, y, r, colour, font, avoid) {
+  ctx.save();
+  ctx.font = font || '10px system-ui, sans-serif';
+  var half = ctx.measureText(text).width / 2;
+  ctx.restore();
+  var spots = [
+    [x, y + r + 14],
+    [x, y - r - 7],
+    [x + r + 8 + half, y + 4],
+    [x - r - 8 - half, y + 4]
+  ];
+  for (var i = 0; i < spots.length; i++) {
+    if (label(text, spots[i][0], spots[i][1], colour, font, avoid)) return true;
+  }
+  return false;
+}
+
+/** Screen-space footprint rectangles, used to keep labels off buildings. */
+function buildingRects(frame) {
+  return frame.buildings.map(function (b) {
+    var o = toScreen(b.cx * CELL, b.cy * CELL);
+    return [o[0] - 2, o[1] - 8, o[0] + b.w * CELL * cam.scale + 2, o[1] + b.h * CELL * cam.scale + 14];
+  });
 }
 
 function barColour(frac) {
@@ -892,8 +930,48 @@ function drawSquadStatus(s, p, colour) {
 
 // ---------------------------------------------------------------- effects --
 
-var EFFECT_TICKS = { shot: 3, squad_destroyed: 20, building_destroyed: 26, building_completed: 16 };
+/* Every event kind `coh/sim/systems/*.py` emits gets a deliberate decision
+ * here: an on-map effect, or `draw: null` when it is deliberately shown
+ * somewhere else (points pulse themselves; `game_over` is the HUD banner).
+ * A kind that is not listed — a newer sim than this page — falls through to
+ * `genericMark`, so the viewer degrades instead of throwing. `ticks` is how
+ * long the effect lives, in sim ticks. */
+var EFFECTS = {
+  shot: { ticks: 3, draw: function (e) { drawTracer(e); } },
+  explosion: {
+    ticks: 14,
+    // the sim tells us the blast radius in metres; draw it at true size
+    draw: function (e, f) { explosion(e, f, Math.max(Number(e.d.radius) || 0, 2)); }
+  },
+  squad_destroyed: { ticks: 20, draw: function (e, f) { explosion(e, f, 4.5); deathMark(e, f); } },
+  vehicle_destroyed: { ticks: 28, draw: function (e, f) { explosion(e, f, 8); deathMark(e, f); } },
+  building_destroyed: { ticks: 26, draw: function (e, f) { explosion(e, f, 9); deathMark(e, f); } },
+  weapon_abandoned: { ticks: 18, draw: function (e, f) { ripple(e, f, '#8f8a7c', 3.5); } },
+  weapon_recrewed: { ticks: 18, draw: function (e, f) { ripple(e, f, '#7fbf6a', 3.5); } },
+  garrison_entered: { ticks: 14, draw: function (e, f) { ripple(e, f, '#9fc4e8', 2.5); } },
+  garrison_ejected: { ticks: 20, draw: function (e, f) { explosion(e, f, 3); deathMark(e, f); } },
+  reinforced: { ticks: 14, draw: function (e, f) { ripple(e, f, '#7fbf6a', 2.5); } },
+  unit_trained: { ticks: 16, draw: function (e, f) { ripple(e, f, '#9fc4e8', 4); } },
+  construction_started: { ticks: 16, draw: function (e, f) { ripple(e, f, '#d8b45a', 4); } },
+  building_completed: { ticks: 16, draw: function (e, f) { ripple(e, f, '#7fbf6a', 6); } },
+  research_completed: { ticks: 16, draw: function (e, f) { ripple(e, f, '#9fc4e8', 5); } },
+  upgrade_bought: { ticks: 14, draw: function (e, f) { ripple(e, f, '#d8b45a', 2.5); } },
+  point_captured: { ticks: 16, draw: null },     // pulse drawn with the point
+  point_neutralized: { ticks: 16, draw: null },  // pulse drawn with the point
+  game_over: { ticks: 1, draw: null }            // winner banner, see updateHud
+};
 var DEFAULT_EFFECT_TICKS = 16;
+var MAX_EFFECT_TICKS = 30;
+
+/** Timeline tick marks, by event kind (kinds not listed are not marked). */
+var MARKER_COLOURS = {
+  point_captured: '#d8b45a',
+  point_neutralized: '#d8b45a',
+  squad_destroyed: '#e2705f',
+  vehicle_destroyed: '#e2705f',
+  building_destroyed: '#e2705f',
+  game_over: '#f2e9c8'
+};
 
 /** Events whose effect is still alive at `t`, each tagged with age in 0..1. */
 function activeEffects(t) {
@@ -901,11 +979,11 @@ function activeEffects(t) {
   var lo = 0, hi = allEvents.length - 1, start = allEvents.length;
   while (lo <= hi) {
     var mid = (lo + hi) >> 1;
-    if (allEvents[mid].t >= t - 30) { start = mid; hi = mid - 1; } else lo = mid + 1;
+    if (allEvents[mid].t >= t - MAX_EFFECT_TICKS) { start = mid; hi = mid - 1; } else lo = mid + 1;
   }
   for (var i = start; i < allEvents.length && allEvents[i].t <= t; i++) {
     var e = allEvents[i];
-    var span = EFFECT_TICKS[e.k] || DEFAULT_EFFECT_TICKS;
+    var span = (EFFECTS[e.k] && EFFECTS[e.k].ticks) || DEFAULT_EFFECT_TICKS;
     var age = (t - e.t) / span;
     if (age >= 0 && age <= 1) out.push({ k: e.k, d: e.d, age: age });
   }
@@ -941,14 +1019,9 @@ function drawEffects(effects, frame) {
   ctx.save();
   effects.forEach(function (e) {
     try {
-      if (e.k === 'shot') drawTracer(e);
-      else if (e.k === 'squad_destroyed') { explosion(e, frame, 4.5); deathMark(e, frame); }
-      else if (e.k === 'building_destroyed') explosion(e, frame, 9);
-      else if (e.k === 'building_completed') ripple(e, frame, '#7fbf6a', 6);
-      else if (e.k === 'point_captured' || e.k === 'point_neutralized') { /* pulse drawn with the point */ }
-      else if (e.k === 'unit_trained' || e.k === 'reinforced') ripple(e, frame, '#9fc4e8', 3);
-      else if (e.k === 'game_over') { /* HUD only */ }
-      else genericMark(e, frame);
+      var spec = EFFECTS[e.k];
+      if (spec === undefined) genericMark(e, frame);   // a kind this page predates
+      else if (spec.draw) spec.draw(e, frame);         // null = shown elsewhere
     } catch (err) { /* an effect must never break the frame */ }
   });
   ctx.restore();
@@ -976,17 +1049,24 @@ function drawTracer(e) {
   }
 }
 
+/** Expanding ring that reaches `metres` (the real blast radius) at full age,
+ *  plus a brief flash at the impact point. */
 function explosion(e, frame, metres) {
   var w = eventPos(e, frame);
   if (!w) return;
   var p = toScreen(w[0], w[1]);
-  var r = metres * cam.scale * (0.25 + e.age * 1.1);
+  var full = Math.max(metres * cam.scale, 6);
+  var r = full * (0.15 + 0.85 * e.age);
   ctx.strokeStyle = 'rgba(255,180,90,' + ((1 - e.age) * 0.85).toFixed(2) + ')';
   ctx.lineWidth = Math.max(1.5, 4 * (1 - e.age));
   ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 6.2832); ctx.stroke();
-  if (e.age < 0.25) {
-    ctx.fillStyle = 'rgba(255,232,170,' + (0.8 * (1 - e.age / 0.25)).toFixed(2) + ')';
-    ctx.beginPath(); ctx.arc(p[0], p[1], metres * cam.scale * 0.5, 0, 6.2832); ctx.fill();
+  if (e.age < 0.3) {
+    var flash = 1 - e.age / 0.3;
+    var grad = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], full * 0.6);
+    grad.addColorStop(0, 'rgba(255,240,190,' + (0.85 * flash).toFixed(2) + ')');
+    grad.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(p[0], p[1], full * 0.6, 0, 6.2832); ctx.fill();
   }
 }
 
@@ -1067,7 +1147,7 @@ function updateHud(frame) {
     el.style.setProperty('--team', playerColour(i));
     var over = r.pop > r.cap ? ' over' : '';
     el.innerHTML =
-      '<div class="who">Player ' + i + ' <span class="fac">' + (p.faction || '?') +
+      '<div class="who">Player ' + i + ' <span class="fac">' + factionName(p.faction) +
       ' &middot; team ' + p.team + '</span></div>' +
       '<div class="res">' +
       '<span class="mp"><i>MP</i><b>' + Math.round(r.mp) + '</b></span>' +
@@ -1082,11 +1162,27 @@ function updateHud(frame) {
     return '<span style="color:' + teamColour(team) + '">' + Math.round(v) + '</span>';
   }).join('<span style="color:#6b6656">/</span>');
 
-  var name = title(D.map.name);
-  if (D.winner !== null && D.winner !== undefined && tick >= lastTick() - 1) {
-    name += D.winner === -1 ? ' — draw' : ' — team ' + D.winner + ' wins';
+  document.getElementById('mapname').textContent = title(D.map.name);
+  updateBanner();
+}
+
+/** The `game_over` event, shown as a banner once the playhead reaches it. */
+function updateBanner() {
+  var banner = document.getElementById('banner');
+  var over = null;
+  for (var i = allEvents.length - 1; i >= 0; i--) {
+    if (allEvents[i].k === 'game_over') { over = allEvents[i]; break; }
   }
-  document.getElementById('mapname').textContent = name;
+  if (over === null || tick < over.t) { banner.hidden = true; return; }
+
+  var winner = over.d.winner;
+  if (winner === null || winner === undefined) winner = D.winner;
+  var drawn = winner === -1 || winner === null || winner === undefined;
+  banner.hidden = false;
+  banner.style.setProperty('--team', drawn ? NEUTRAL : teamColour(winner));
+  banner.innerHTML =
+    '<b>' + (drawn ? 'Draw' : 'Team ' + winner + ' wins') + '</b>' +
+    (over.d.reason ? '<span>' + title(over.d.reason) + '</span>' : '');
 }
 
 function drawTimeline() {

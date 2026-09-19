@@ -77,6 +77,22 @@ html, body {
 #tickets { display: flex; gap: 10px; justify-content: center; font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; }
 #mapname { color: var(--dim); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
 
+#banner {
+  position: fixed;
+  left: 50%;
+  bottom: 86px;
+  transform: translateX(-50%);
+  padding: 8px 26px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-top: 3px solid var(--team, #888);
+  border-radius: 4px;
+  pointer-events: none;
+}
+#banner b { display: block; font-size: 17px; letter-spacing: 0.06em; color: var(--team, var(--ink)); }
+#banner span { color: var(--dim); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; }
+
 /* -------------------------------------------------------------- panel --- */
 
 #panel {

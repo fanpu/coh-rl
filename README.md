@@ -22,7 +22,7 @@ the frames are rebuilt exactly, not stored.
 uv run python scripts/play_match.py --map hedgerow_crossing \
     --p0 t1 --p1 t1 --seed 0 --data-dir tests/data/fixtures --out match.replay.json
 uv run python -m coh.viewer match.replay.json --data-dir tests/data/fixtures
-# open http://127.0.0.1:8000/
+# open http://127.0.0.1:8000/   (add #paused to open on the first frame)
 ```
 
 ![The viewer mid-match](docs/img/viewer.png)
@@ -32,7 +32,14 @@ dot per living model in the sim's own formation, vehicles get a rotated hull
 and a turret line, team weapons show their set-up arc, and shots, explosions,
 captures and deaths animate from the sim's event log. The HUD tracks manpower,
 munitions, fuel, population and victory tickets; click any squad or building to
-inspect its frame fields.
+inspect its frame fields, and the winner is announced on the last frame.
+
+Every unit presentation and event effect in one frame — set-up and
+setting-up team weapons, an abandoned gun, a tank and its turret, retreating,
+pinned and reinforcing infantry, a garrison badge, a half-built structure with
+its production queue, and blast / wreck / ejection effects:
+
+![Every unit presentation and effect](docs/img/viewer-units.png)
 
 Press `F` to cycle the fog of war between omniscient, team 0's view and team
 1's view — enemies standing in cells that team cannot see are hidden and unseen
