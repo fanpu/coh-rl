@@ -83,6 +83,11 @@ class Sim:
             ghosts={},
             next_id=1,
         )
+        # Pathfinding results, keyed (is_vehicle, start, goal) -- see
+        # coh/sim/pathfinding.py. Dropped wholesale whenever map.version
+        # moves on, so entries never need the version in the key.
+        self._path_cache: dict[tuple, list[tuple[int, int]] | None] = {}
+        self._path_cache_version: int = -1
 
         self._setup_players()
         self._place_neutral_buildings()
@@ -186,10 +191,16 @@ class Sim:
         return entity_id
 
     def spawn_squad(self, owner: int, def_id: str, pos) -> Squad:
-        """Create a squad at a world position (meters). Faction is not checked."""
+        """Create a squad at a world position (meters). Faction is not checked.
+
+        A team weapon spawns already `SETTING_UP` (facing its heading), since
+        it always starts deployed rather than mid-march; everything else
+        spawns `IDLE`.
+        """
         sdef = self.data.squads.get(def_id)
         if sdef is None:
             raise SimError(f"unknown squad def {def_id!r}")
+        is_team_weapon = sdef.kind == "team_weapon"
         squad = Squad(
             id=self._take_id(),
             owner=owner,
@@ -197,8 +208,11 @@ class Sim:
             pos=np.asarray(pos, dtype=float).copy(),
             heading=0.0,
             members=[Member(hp=sdef.member_hp, weapon=weapon) for weapon in sdef.loadout],
-            state=SquadState.IDLE,
+            state=SquadState.SETTING_UP if is_team_weapon else SquadState.IDLE,
         )
+        if is_team_weapon:
+            squad.facing = squad.heading
+            squad.setup_done_tick = self.state.tick + systems.movement.setup_ticks(self, sdef)
         self.state.squads[squad.id] = squad
         return squad
 
