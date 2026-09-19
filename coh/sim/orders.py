@@ -21,11 +21,13 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any, Callable
 
+from coh.maps.format import cell_of
+from coh.sim import pathfinding
 from coh.sim.state import SquadState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
-    from coh.sim.state import Player
+    from coh.sim.state import Player, Squad
 
 
 @dataclass(frozen=True)
@@ -205,6 +207,91 @@ def apply_building_order(sim: "Sim", order: Order) -> None:
     """Train/Research have no effect until task 14 implements queues."""
 
 
+# -- move-type orders (task 6): resolve to a path via coh/sim/systems/movement --
+
+
+def _passable(sim: "Sim", squad: "Squad") -> Any:
+    sdef = sim.data.squads[squad.def_id]
+    return sim.map.pass_veh if sdef.kind == "vehicle" else sim.map.pass_inf
+
+
+def apply_move(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    movement.start_path(sim, squad, order, order.cell, SquadState.MOVING)  # type: ignore[attr-defined]
+
+
+def apply_attack_move(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    movement.start_path(sim, squad, order, order.cell, SquadState.MOVING)  # type: ignore[attr-defined]
+
+
+def apply_retreat(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    player = sim.state.players[squad.owner]
+    hq = sim.state.buildings[player.hq_id]
+    bdef = sim.data.buildings[hq.def_id]
+    start_cell = cell_of(squad.pos)
+    goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), hq.cell, bdef.footprint, start_cell)
+    if goal_cell is None:
+        goal_cell = hq.cell
+    movement.start_path(sim, squad, order, goal_cell, SquadState.RETREATING)
+
+
+def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    if order.point_id not in sim.map.points:  # type: ignore[attr-defined]
+        return OrderResult(False, f"no such point {order.point_id!r}")  # type: ignore[attr-defined]
+    return OK
+
+
+def apply_capture(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    point = sim.map.points[order.point_id]  # type: ignore[attr-defined]
+    movement.start_path(sim, squad, order, point.cell, SquadState.MOVING)
+
+
+def validate_garrison(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    if order.building_id not in sim.state.buildings:  # type: ignore[attr-defined]
+        return OrderResult(False, f"no such building {order.building_id}")  # type: ignore[attr-defined]
+    return OK
+
+
+def apply_garrison(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    building = sim.state.buildings[order.building_id]  # type: ignore[attr-defined]
+    bdef = sim.data.buildings.get(building.def_id) or sim.data.neutral.get(building.def_id)
+    footprint = bdef.footprint if bdef is not None else (1, 1)
+    start_cell = cell_of(squad.pos)
+    goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), building.cell, footprint, start_cell)
+    if goal_cell is None:
+        goal_cell = building.cell
+    movement.start_path(sim, squad, order, goal_cell, SquadState.MOVING)
+
+
+def apply_build(sim: "Sim", order: Order) -> None:
+    from coh.sim.systems import movement
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    bdef = sim.data.buildings.get(order.structure)  # type: ignore[attr-defined]
+    footprint = bdef.footprint if bdef is not None else (1, 1)
+    start_cell = cell_of(squad.pos)
+    goal_cell = pathfinding.nearest_adjacent_passable(
+        _passable(sim, squad), order.cell, footprint, start_cell  # type: ignore[attr-defined]
+    )
+    if goal_cell is None:
+        goal_cell = order.cell  # type: ignore[attr-defined]
+    movement.start_path(sim, squad, order, goal_cell, SquadState.MOVING)
+
+
 @dataclass(frozen=True)
 class OrderHandler:
     validate: Callable[["Sim", "Player", Order], OrderResult]
@@ -215,16 +302,16 @@ class OrderHandler:
 # a `validate_<order>` of their own, and `apply_squad_order` where storing the
 # order is not enough.
 ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
-    Move: OrderHandler(_accept, apply_squad_order),
-    AttackMove: OrderHandler(_accept, apply_squad_order),
+    Move: OrderHandler(_accept, apply_move),
+    AttackMove: OrderHandler(_accept, apply_attack_move),
     Attack: OrderHandler(_accept, apply_squad_order),
-    Capture: OrderHandler(_accept, apply_squad_order),
-    Garrison: OrderHandler(_accept, apply_squad_order),
+    Capture: OrderHandler(validate_capture, apply_capture),
+    Garrison: OrderHandler(validate_garrison, apply_garrison),
     Ungarrison: OrderHandler(_accept, apply_squad_order),
-    Retreat: OrderHandler(_accept, apply_squad_order),
+    Retreat: OrderHandler(_accept, apply_retreat),
     Reinforce: OrderHandler(_accept, apply_squad_order),
     SetFacing: OrderHandler(_accept, apply_squad_order),
-    Build: OrderHandler(_accept, apply_squad_order),
+    Build: OrderHandler(_accept, apply_build),
     Train: OrderHandler(_accept, apply_building_order),
     Research: OrderHandler(_accept, apply_building_order),
     BuyUpgrade: OrderHandler(_accept, apply_squad_order),

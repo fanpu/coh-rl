@@ -83,6 +83,10 @@ class Sim:
             ghosts={},
             next_id=1,
         )
+        # Pathfinding results, keyed (is_vehicle, start, goal, map.version) --
+        # see coh/sim/pathfinding.py. Stale entries (from before a version
+        # bump) are simply never looked up again.
+        self._path_cache: dict[tuple, list[tuple[int, int]] | None] = {}
 
         self._setup_players()
         self._place_neutral_buildings()

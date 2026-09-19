@@ -159,6 +159,10 @@ class GameState:
     next_id: int  # shared id counter for squads and buildings
     winner: int | None = None  # winning team
     events: list[Event] = field(default_factory=list)
+    # Append-only log of terrain edits a vehicle crushing cover makes, e.g.
+    # (cx, cy, ".") for a fence cell cleared. Included in `state_hash` so two
+    # sims that only diverge by a crushed fence hash differently.
+    terrain_changes: list[tuple[int, int, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +280,7 @@ def canonical_state(state: GameState) -> dict[str, Any]:
             [team, [_ghost(state.ghosts[team][bid]) for bid in sorted(state.ghosts[team])]]
             for team in sorted(state.ghosts)
         ],
+        "terrain_changes": [[cx, cy, ch] for cx, cy, ch in state.terrain_changes],
     }
 
 
