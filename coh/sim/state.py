@@ -83,6 +83,14 @@ class Squad:
     pending_upgrade: str | None = None  # squad upgrade being bought (task 14)
     upgrade_done_tick: int = 0  # tick `pending_upgrade` lands on
     abandoned: bool = False  # team weapon whose crew died (task 10)
+    # Id of the abandoned team weapon this squad's current `Move` order is
+    # heading to re-crew (task 10); cleared by any other order.
+    recrew_target: int | None = None
+    # Earliest tick at which combat may *automatically* re-face this team
+    # weapon again (task 10). Hysteresis: two enemies on opposite sides must
+    # not make the crew spin in place forever without ever firing. An
+    # explicit `SetFacing` is always honoured and resets this.
+    reface_hold_tick: int = 0
     turret_heading: float = 0.0  # vehicles (task 11)
     last_attacker_pos: tuple[float, float] | None = None  # armour facing (task 11)
     moving: bool = False  # set by movement, read by combat (moving accuracy)
@@ -223,6 +231,8 @@ def _squad(s: Squad) -> dict[str, Any]:
         "pending_upgrade": s.pending_upgrade,
         "upgrade_done_tick": s.upgrade_done_tick,
         "abandoned": s.abandoned,
+        "recrew_target": s.recrew_target,
+        "reface_hold_tick": s.reface_hold_tick,
         "turret_heading": _r(s.turret_heading),
         "last_attacker_pos": None if s.last_attacker_pos is None else _rs(s.last_attacker_pos),
         "moving": s.moving,

@@ -1,31 +1,41 @@
-"""combat — target acquisition, shots, damage and deaths (task 8).
+"""combat — target acquisition, shots, damage and deaths (tasks 8 and 10).
 
-Direct-fire only. One tick of combat is, per squad in ascending id order:
+One tick of combat is, per squad in ascending id order:
 
 1. `acquire_target` — keep the current target while it is still a legal one,
    otherwise pick the best visible enemy in range with LOS (or follow the
    squad's `Attack` order, walking toward the target until it is in range);
 2. `fire_member` — per member, in loadout order, decide whether its weapon
    can fire this tick (ready, in its own range band, not moving with a
-   moving-accuracy of 0, team weapon set up);
+   moving-accuracy of 0, team weapon set up and pointing the right way);
 3. `resolve_bullets` — one bullet for a single-shot weapon, `rate_of_fire ×
-   burst_duration` for a burst weapon, each rolled separately;
+   burst_duration` for a burst weapon, each rolled separately — or, for an
+   indirect weapon, `fire_shell`: one scattered bomb, no hit roll;
 4. `apply_hit` / `add_suppression` — damage a randomly chosen living member
    (or the building), and accumulate suppression on the target regardless of
-   whether the bullet hit;
+   whether the bullet hit; an explosion instead damages and suppresses
+   everything hostile inside `aoe_radius` (`_explode`);
 5. `schedule_next_shot` — cooldown and reload bookkeeping.
 
-Later tasks extend exactly these seams: task 9's `add_suppression` spills
-part of every bullet's suppression to nearby squads on the victim's side
-(`_spill_suppression`), while `coh/sim/systems/suppression.py` owns the
-slower per-tick decay and `suppressed`/`pinned` thresholds; task 10 adds
-arcs / indirect fire / abandoned team weapons, task 11 adds penetration to
-`apply_hit`, task 12 fills in `on_building_destroyed`.
+Task 10 also owns team weapons as *objects* rather than squads: the crewed
+weapon lives in `members[0]` and stays there as the crew dies
+(`_promote_gunner`), outlives the crew entirely as an abandoned shell
+(`_abandon_weapon`), and can be picked up again by any infantry squad walking
+onto it (`try_recrew`, driven by `orders.apply_move` and `movement`'s
+arrival). `set_facing` swings a gun onto a new bearing, whether an agent asked
+for it (`SetFacing`) or acquisition decided the fight had moved (
+`_auto_reface`, rate-limited by `Squad.reface_hold_tick`).
+
+Task 9's `add_suppression` spills part of every bullet's suppression to squads
+near the victim (`_spill_suppression`), while `coh/sim/systems/suppression.py`
+owns the slower per-tick decay and `suppressed`/`pinned` thresholds; task 11
+adds penetration to `apply_hit`, task 12 fills in `on_building_destroyed`.
 
 RNG discipline: every draw comes from `sim.state.rng`, in a fixed order
 (squads ascending id -> members in loadout order -> burst length -> per
-bullet: victim, hit roll -> cooldown -> reload). Bullets aimed at a
-building draw nothing at all: they always hit.
+bullet: victim, hit roll -> cooldown -> reload; an indirect firing draws its
+scatter x then y instead). Bullets aimed at a building draw nothing at all:
+they always hit, and so does every explosion.
 """
 
 from __future__ import annotations
@@ -41,11 +51,14 @@ from coh.maps.cover import cover_at
 from coh.maps.format import cell_of, center_of
 from coh.sim import orders as orders_mod
 from coh.sim.constants import (
+    AOE_EDGE_FALLOFF,
     ATTACK_ORDER_LOST_TARGET_S,
     ATTACK_ORDER_REPATH_S,
+    AUTO_REFACE_HOLD_SETUPS,
     BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT,
     CELL_M,
     FORMATION_OFFSETS,
+    RECREW_RANGE_M,
     TICKS_PER_SECOND,
 )
 from coh.sim.state import Building, Event, Squad, SquadState
@@ -55,7 +68,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from coh.sim.sim import Sim
     from coh.sim.state import Member
 
-__all__ = ["run", "acquire_target", "apply_hit", "on_building_destroyed"]
+__all__ = [
+    "run",
+    "acquire_target",
+    "apply_hit",
+    "on_building_destroyed",
+    "abandoned_weapon_near",
+    "can_recrew",
+    "try_recrew",
+    "set_facing",
+]
 
 # States in which a squad neither acquires nor fires.
 _NO_COMBAT_STATES = (SquadState.RETREATING, SquadState.CONSTRUCTING)
@@ -164,16 +186,10 @@ def _can_fight(sim: "Sim", squad: Squad) -> bool:
 
 
 def _weapon_of(sim: "Sim", member: "Member") -> WeaponDef | None:
-    """The member's direct-fire weapon, or None if unarmed / indirect.
-
-    Indirect weapons (mortars) are task 10's; they never fire here.
-    """
+    """The member's weapon, or None if it is unarmed / carries an unknown id."""
     if not member.weapon:
         return None
-    weapon = sim.data.weapons.get(member.weapon)
-    if weapon is None or weapon.indirect:
-        return None
-    return weapon
+    return sim.data.weapons.get(member.weapon)
 
 
 def _armed_members(sim: "Sim", squad: Squad) -> Iterable[tuple[int, "Member", WeaponDef]]:
@@ -269,6 +285,93 @@ def _footprint_centres(sim: "Sim", building: Building) -> np.ndarray:
     return cells
 
 
+# ---------------------------------------------------------------------------
+# Team weapons: the crewed weapon in slot 0, its firing arc, and its bearings
+# ---------------------------------------------------------------------------
+
+
+def _team_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
+    """The crewed weapon `members[0]` carries, if this is a team weapon squad.
+
+    Member 0 is always the gunner (`_promote_gunner` keeps it that way when
+    the gunner dies), so the weapon is read off the model rather than off the
+    squad def: a re-crewed shell has the same weapon in the same slot.
+    """
+    sdef = sim.data.squads.get(squad.def_id)
+    if sdef is None or sdef.kind != "team_weapon" or not squad.members:
+        return None
+    gunner = squad.members[0]
+    if gunner.hp <= 0:
+        return None
+    return _weapon_of(sim, gunner)
+
+
+def _arc_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
+    """The team weapon, if it has a firing arc narrow enough to matter."""
+    weapon = _team_weapon(sim, squad)
+    return weapon if weapon is not None and weapon.arc_deg < 360.0 else None
+
+
+def _indirect_weapon(sim: "Sim", squad: Squad) -> WeaponDef | None:
+    """The team weapon, if it lobs its shells over the terrain (mortars)."""
+    weapon = _team_weapon(sim, squad)
+    return weapon if weapon is not None and weapon.indirect else None
+
+
+def _bearing(from_pos: np.ndarray, to_pos: np.ndarray) -> float:
+    delta = to_pos - from_pos
+    return math.atan2(float(delta[1]), float(delta[0]))
+
+
+def _in_arc(squad: Squad, weapon: WeaponDef, aim_pos: np.ndarray) -> bool:
+    """Is `aim_pos` within `arc_deg / 2` of where the gun points?"""
+    if weapon.arc_deg >= 360.0:
+        return True
+    from coh.sim.systems import movement
+
+    facing = squad.heading if squad.facing is None else squad.facing
+    offset = movement.angle_diff(_bearing(squad.pos, aim_pos), facing)
+    return offset <= math.radians(weapon.arc_deg) / 2.0
+
+
+def set_facing(sim: "Sim", squad: Squad, direction: float, *, auto: bool) -> None:
+    """Swing the gun to `direction` (radians), paying `2 x setup_time`.
+
+    The squad tears down (`setup_time`), then `movement` walks it through its
+    ordinary arrival path and sets it up again on the new bearing (another
+    `setup_time`). `heading` moves with `facing`: the crew turns bodily, and
+    `_on_arrival` derives the new `facing` from the heading.
+
+    `auto` marks an acquisition-driven re-face, which is rate-limited by
+    `squad.reface_hold_tick` so that two enemies on opposite sides cannot
+    make the crew spin in place forever without ever firing. An explicit
+    `SetFacing` (`auto=False`) is always honoured and clears the hold.
+    """
+    from coh.sim.systems import movement
+
+    sdef = sim.data.squads.get(squad.def_id)
+    if sdef is None:
+        return
+    ticks = movement.setup_ticks(sim, sdef)
+    squad.heading = direction
+    squad.facing = direction
+    squad.path = []
+    if not auto:
+        squad.reface_hold_tick = 0
+    if ticks <= 0:  # a "team weapon" with no setup time simply pivots
+        return
+    squad.state = SquadState.TEARING_DOWN
+    squad.setup_done_tick = sim.state.tick + ticks
+    if auto:
+        squad.reface_hold_tick = sim.state.tick + AUTO_REFACE_HOLD_SETUPS * ticks
+
+
+def _auto_reface(sim: "Sim", squad: Squad, aim_pos: np.ndarray) -> None:
+    if sim.state.tick < squad.reface_hold_tick:
+        return
+    set_facing(sim, squad, _bearing(squad.pos, aim_pos), auto=True)
+
+
 def _lookup(sim: "Sim", entity_id: int) -> Squad | Building | None:
     squad = sim.state.squads.get(entity_id)
     if squad is not None:
@@ -287,6 +390,10 @@ def acquire_target(sim: "Sim", squad: Squad, snapshot: _Snapshot) -> None:
     An `Attack` order pins the target (and walks the squad toward it);
     otherwise the current target is kept while it stays legal, and a fresh
     one is picked when it does not.
+
+    A deployed team weapon with a firing arc prefers targets it can actually
+    shoot at. Only when nothing is in the arc, and some enemy is otherwise
+    engageable, does it swing the gun around (paying `2 x setup_time`).
     """
     team = _team_of(sim, squad.owner)
     reach = _max_range(sim, squad)
@@ -298,19 +405,44 @@ def acquire_target(sim: "Sim", squad: Squad, snapshot: _Snapshot) -> None:
         _pursue_attack_order(sim, squad, squad.order, team, reach)
         return
 
+    # Only a deployed gun is arc-limited: one that is still setting up (or
+    # walking) cannot fire its team weapon at all, so restricting what it may
+    # look at would only blind its crew's small arms.
+    arc = _arc_weapon(sim, squad) if squad.state is SquadState.SET_UP else None
+
     if squad.target_id is not None:
         current = _lookup(sim, squad.target_id)
         target = None if current is None else _describe(sim, squad.pos, current)
-        if target is not None and _is_engageable(sim, squad, team, target, reach):
+        if (
+            target is not None
+            and _is_engageable(sim, squad, team, target, reach)
+            and (arc is None or _in_arc(squad, arc, target.aim_pos))
+        ):
             return
         squad.target_id = None
 
-    best = _choose_target(sim, squad, team, reach, snapshot)
-    squad.target_id = None if best is None else best.id
+    best = _choose_target(sim, squad, team, reach, snapshot, arc)
+    if best is not None:
+        squad.target_id = best.id
+        return
+
+    squad.target_id = None
+    if arc is None:
+        return
+    # Nothing in the arc: is anything worth turning the gun for?
+    elsewhere = _choose_target(sim, squad, team, reach, snapshot, None)
+    if elsewhere is None:
+        return
+    squad.target_id = elsewhere.id
+    _auto_reface(sim, squad, elsewhere.aim_pos)
 
 
 def _is_engageable(sim: "Sim", squad: Squad, team: int, target: _Target, reach: float) -> bool:
-    """Visible to the squad's team, hostile, within reach and in LOS."""
+    """Visible to the squad's team, hostile, within reach and in LOS.
+
+    An indirect weapon drops the LOS requirement -- a mortar shells anything
+    its *team* can see -- and gains a minimum range in exchange.
+    """
     if _team_of(sim, target.entity.owner) == team:
         return False
     if isinstance(target.entity, Building) and target.entity.neutral:
@@ -319,13 +451,24 @@ def _is_engageable(sim: "Sim", squad: Squad, team: int, target: _Target, reach: 
         return False
     if not vision.is_visible(sim, team, target.entity):
         return False
+    indirect = _indirect_weapon(sim, squad)
+    if indirect is not None:
+        return target.distance >= indirect.min_range
     return vision.has_los(sim.map, squad.pos, target.aim_pos)
 
 
 def _choose_target(
-    sim: "Sim", squad: Squad, team: int, reach: float, snapshot: _Snapshot
+    sim: "Sim",
+    squad: Squad,
+    team: int,
+    reach: float,
+    snapshot: _Snapshot,
+    arc_weapon: WeaponDef | None = None,
 ) -> _Target | None:
-    """Best `(priority desc, distance asc, id asc)` engageable enemy, or None."""
+    """Best `(priority desc, distance asc, id asc)` engageable enemy, or None.
+
+    With `arc_weapon`, only targets inside that weapon's firing arc count.
+    """
     primary = _primary_weapon(sim, squad)
     if primary is None:
         return None
@@ -336,6 +479,8 @@ def _choose_target(
     for entity in _candidates(sim, squad, team, reach, snapshot):
         target = _describe(sim, squad.pos, entity)
         if target is None or not _is_engageable(sim, squad, team, target, reach):
+            continue
+        if arc_weapon is not None and not _in_arc(squad, arc_weapon, target.aim_pos):
             continue
         mods = primary.vs(target.target_type)
         if isinstance(entity, Building) and mods.damage < BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT:
@@ -377,7 +522,8 @@ def _halt(sim: "Sim", squad: Squad) -> None:
     """Stop walking, the way movement's arrival does.
 
     A team weapon that stops deploys again, so that it can actually fire the
-    target it just walked into range of.
+    target it just walked into range of -- facing that target if it has one,
+    otherwise its last travel direction.
     """
     squad.path = []
     if squad.state is not SquadState.MOVING:
@@ -387,10 +533,21 @@ def _halt(sim: "Sim", squad: Squad) -> None:
     sdef = sim.data.squads[squad.def_id]
     if sdef.kind == "team_weapon":
         squad.state = SquadState.SETTING_UP
-        squad.facing = squad.heading
+        squad.facing = _stopping_facing(sim, squad)
         squad.setup_done_tick = sim.state.tick + movement.setup_ticks(sim, sdef)
     else:
         squad.state = SquadState.IDLE
+
+
+def _stopping_facing(sim: "Sim", squad: Squad) -> float:
+    """Where a team weapon that just stopped points its gun: at the target it
+    stopped for, or failing that along its last travel direction."""
+    if squad.target_id is not None:
+        entity = _lookup(sim, squad.target_id)
+        target = None if entity is None else _describe(sim, squad.pos, entity)
+        if target is not None:
+            return _bearing(squad.pos, target.aim_pos)
+    return squad.heading
 
 
 def _clear_attack_order(sim: "Sim", squad: Squad) -> None:
@@ -481,8 +638,13 @@ def fire_member(sim: "Sim", squad: Squad, sdef, slot: int, member: "Member", wea
     """Decide whether this member fires this tick, and resolve the firing."""
     if sim.state.tick < member.next_ready_tick:
         return
-    if sdef.kind == "team_weapon" and slot == 0 and squad.state is not SquadState.SET_UP:
-        return  # the crewed weapon only fires deployed (arcs are task 10)
+    if sdef.kind == "team_weapon" and slot == 0:
+        # The crewed weapon fires only deployed, and only inside its arc; the
+        # crew's own small arms (later slots) are not arc-limited.
+        if squad.state is not SquadState.SET_UP:
+            return
+        if not _in_arc(squad, weapon, target.aim_pos):
+            return
     if target.distance > weapon.ranges[2] or target.distance < weapon.min_range:
         return
 
@@ -493,7 +655,14 @@ def fire_member(sim: "Sim", squad: Squad, sdef, slot: int, member: "Member", wea
         moving_mult = weapon.moving_accuracy
 
     band = _range_band(weapon, target.distance)
-    hit_any = resolve_bullets(sim, squad, member, weapon, band, moving_mult, target)
+    if weapon.indirect:
+        hit_any = fire_shell(sim, squad, weapon, band, target)
+    elif _indirect_weapon(sim, squad) is not None and not vision.has_los(sim.map, squad.pos, target.aim_pos):
+        # Acquisition dropped the LOS test for this squad's tube; the crew's
+        # own small arms still cannot shoot through the hedgerow.
+        return
+    else:
+        hit_any = resolve_bullets(sim, squad, member, weapon, band, moving_mult, target)
     sim.state.events.append(
         Event(
             kind="shot",
@@ -580,6 +749,130 @@ def _resolve_bullet(
     return True
 
 
+# ---------------------------------------------------------------------------
+# Indirect fire: one scattered shell per firing, resolved as an explosion
+# ---------------------------------------------------------------------------
+
+
+def fire_shell(sim: "Sim", squad: Squad, weapon: WeaponDef, band: int, target: _Target) -> bool:
+    """Lob one shell at `target` and resolve where it lands. Returns whether
+    it hurt anything.
+
+    There is no hit roll: the shell scatters instead. Each axis is offset by
+    `N(0, scatter_m * d / max_range)`, drawn x then y so that the RNG stream
+    stays fixed. Burst fields are ignored -- a mortar fires one bomb.
+    """
+    sigma = weapon.scatter_m * target.distance / weapon.ranges[2] if weapon.ranges[2] > 0 else 0.0
+    rng = sim.state.rng
+    offset_x = float(rng.normal(0.0, sigma))
+    offset_y = float(rng.normal(0.0, sigma))
+    impact = target.aim_pos + np.array([offset_x, offset_y])
+
+    hurt = _explode(sim, squad, weapon, band, impact)
+    sim.state.events.append(
+        Event(
+            kind="explosion",
+            tick=sim.state.tick,
+            data={
+                "src": squad.id,
+                "pos": [float(impact[0]), float(impact[1])],
+                "radius": weapon.aoe_radius,
+            },
+        )
+    )
+    return hurt
+
+
+def _falloff(distance: float, radius: float) -> float:
+    """Linear from 1.0 at the impact point to `AOE_EDGE_FALLOFF` at `radius`."""
+    return 1.0 - (1.0 - AOE_EDGE_FALLOFF) * (distance / radius)
+
+
+def _explode(sim: "Sim", attacker: Squad, weapon: WeaponDef, band: int, impact: np.ndarray) -> bool:
+    """Damage and suppress everything hostile inside `weapon.aoe_radius`.
+
+    Only enemies of the shooter are caught: CoH mortars do hurt their own
+    side, but M1's bots are not clever enough to be trusted with that.
+    """
+    radius = weapon.aoe_radius
+    if radius <= 0.0:
+        return False
+    team = _team_of(sim, attacker.owner)
+    hurt = False
+    for sid in sorted(sim.state.squads):
+        victim = sim.state.squads.get(sid)
+        if victim is None or not _is_targetable(victim) or _team_of(sim, victim.owner) == team:
+            continue
+        hurt = _explode_on_squad(sim, attacker, weapon, band, impact, victim) or hurt
+    for bid in sorted(sim.state.buildings):
+        building = sim.state.buildings.get(bid)
+        if building is None or building.neutral or _team_of(sim, building.owner) in (team, _NO_TEAM):
+            continue
+        hurt = _explode_on_building(sim, weapon, impact, building) or hurt
+    return hurt
+
+
+def _explode_on_squad(
+    sim: "Sim", attacker: Squad, weapon: WeaponDef, band: int, impact: np.ndarray, victim: Squad
+) -> bool:
+    sdef = sim.data.squads.get(victim.def_id)
+    if sdef is None:
+        return False
+    mods = weapon.vs(sdef.target_type)
+    is_vehicle = sdef.kind == "vehicle"
+
+    # Snapshot the crew first: members are removed as they die, and every
+    # model in the blast is meant to be caught where it stood when it went
+    # off, not where the survivors shuffle to afterwards.
+    caught = []
+    for slot, member in enumerate(victim.members):
+        if member.hp <= 0:
+            continue
+        distance = float(np.linalg.norm(_member_pos(sim, victim, slot) - impact))
+        if distance > weapon.aoe_radius:
+            continue
+        cover = _cover_for(sim, victim, slot, impact)
+        caught.append((member, distance, cover))
+    if not caught:
+        return False
+
+    hurt = False
+    for member, distance, cover in caught:
+        cover_damage = 1.0 if is_vehicle else weapon.cover(cover).damage
+        damage = weapon.damage * mods.damage * cover_damage * _falloff(distance, weapon.aoe_radius)
+        if damage <= 0.0:
+            continue
+        hurt = True
+        member.hp -= damage
+        if member.hp <= 0.0:
+            _remove_member(sim, victim, member)
+
+    # One dose of suppression per shell, not per model, taken against the
+    # cover of the model nearest the blast.
+    _, _, best_cover = min(caught, key=lambda entry: entry[1])
+    cover_mods = weapon.cover(best_cover)
+    if _is_targetable(victim):  # it may have been wiped out by the blast
+        add_suppression(sim, attacker, victim, weapon, band, cover_mods.suppression * mods.suppression)
+    return hurt
+
+
+def _explode_on_building(sim: "Sim", weapon: WeaponDef, impact: np.ndarray, building: Building) -> bool:
+    cells = _footprint_centres(sim, building)
+    distance = math.sqrt(float(((cells - impact) ** 2).sum(axis=1).min()))
+    if distance > weapon.aoe_radius:
+        return False
+    target_type = _building_target_type(sim, building)
+    if target_type is None:
+        return False
+    damage = weapon.damage * weapon.vs(target_type).damage * _falloff(distance, weapon.aoe_radius)
+    if damage <= 0.0:
+        return False
+    building.hp -= damage
+    if building.hp <= 0.0:
+        _destroy_building(sim, building)
+    return True
+
+
 def _attacker_accuracy_mult(sim: "Sim", squad: Squad) -> float:
     return sim.data.economy.suppressed_accuracy_mult if squad.suppressed else 1.0
 
@@ -600,14 +893,19 @@ def _cover_for(sim: "Sim", victim_squad: Squad, slot: int, from_pos: np.ndarray)
     return cover_at(sim.map, _member_cell(sim, victim_squad, slot), from_pos)
 
 
+def _member_pos(sim: "Sim", squad: Squad, slot: int) -> np.ndarray:
+    """World position of the member in `slot`: the squad position offset by
+    its formation slot, rotated by the squad's heading."""
+    ox, oy = FORMATION_OFFSETS[slot % len(FORMATION_OFFSETS)]
+    cos_h, sin_h = math.cos(squad.heading), math.sin(squad.heading)
+    return squad.pos + np.array([ox * cos_h - oy * sin_h, ox * sin_h + oy * cos_h])
+
+
 def _member_cell(sim: "Sim", squad: Squad, slot: int) -> tuple[int, int]:
     """Where the member in `slot` stands: its formation offset, or the squad
     cell if that offset lands off-map or somewhere infantry cannot stand."""
     squad_cell = cell_of(squad.pos, CELL_M)
-    ox, oy = FORMATION_OFFSETS[slot % len(FORMATION_OFFSETS)]
-    cos_h, sin_h = math.cos(squad.heading), math.sin(squad.heading)
-    offset = np.array([ox * cos_h - oy * sin_h, ox * sin_h + oy * cos_h])
-    cx, cy = cell_of(squad.pos + offset, CELL_M)
+    cx, cy = cell_of(_member_pos(sim, squad, slot), CELL_M)
     if not (0 <= cx < sim.map.width and 0 <= cy < sim.map.height):
         return squad_cell
     if not sim.map.pass_inf[cy, cx]:
@@ -711,11 +1009,145 @@ def apply_hit(
 def _remove_member(sim: "Sim", squad: Squad, member: "Member") -> None:
     """A dead model leaves the squad, taking its weapon with it.
 
-    (Task 10 keeps the team weapon itself on the field when its crew dies.)
+    A team weapon is the exception: it belongs to the gun, not to the man
+    behind it. When the gunner falls the next crewman takes over
+    (`_promote_gunner`), and when the last of them dies the weapon itself
+    stays on the field as an abandoned shell (`_abandon_weapon`).
     """
+    was_gunner = bool(squad.members) and squad.members[0] is member
     squad.members = [m for m in squad.members if m is not member]
+    sdef = sim.data.squads.get(squad.def_id)
+    is_team_weapon = sdef is not None and sdef.kind == "team_weapon"
+
     if not squad.alive_members:
-        _destroy_squad(sim, squad)
+        if is_team_weapon:
+            _abandon_weapon(sim, squad)
+        else:
+            _destroy_squad(sim, squad)
+        return
+
+    if was_gunner and is_team_weapon and sdef.loadout:
+        _promote_gunner(squad, sdef.loadout[0])
+
+
+def _promote_gunner(squad: Squad, weapon_id: str) -> None:
+    """The next crewman steps up to the gun, dropping his own weapon.
+
+    His cooldown/reload bookkeeping belongs to the weapon he just let go of,
+    so it resets with the hand-over.
+    """
+    gunner = squad.members[0]
+    gunner.weapon = weapon_id
+    gunner.next_ready_tick = 0
+    gunner.shots_since_reload = 0
+    gunner.burst_until_tick = 0
+
+
+def _abandon_weapon(sim: "Sim", squad: Squad) -> None:
+    """The last crewman died: leave the gun on the field, crewless.
+
+    The `Squad` stays in `state.squads` as a shell so that it can be
+    re-crewed. `owner` is left alone -- `abandoned` is what every other
+    system reads -- but the shell is no longer visible, targetable, or
+    counted towards its old owner's population and upkeep.
+    """
+    squad.members = []
+    squad.abandoned = True
+    squad.state = SquadState.IDLE
+    squad.order = None
+    squad.path = []
+    squad.target_id = None
+    squad.moving = False
+    squad.suppression = 0.0
+    squad.suppressed = False
+    squad.pinned = False
+    squad.reinforcing = False
+    squad.recrew_target = None
+    squad.reface_hold_tick = 0
+    _forget_target(sim, squad.id)
+    sim.state.events.append(
+        Event(
+            kind="weapon_abandoned",
+            tick=sim.state.tick,
+            data={"id": squad.id, "owner": squad.owner, "def_id": squad.def_id,
+                  "pos": [float(squad.pos[0]), float(squad.pos[1])]},
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Re-crewing an abandoned team weapon
+# ---------------------------------------------------------------------------
+
+
+def can_recrew(sim: "Sim", squad: Squad) -> bool:
+    """Could `squad` man an abandoned weapon? Infantry, two models or more."""
+    sdef = sim.data.squads.get(squad.def_id)
+    if sdef is None or sdef.kind in ("vehicle", "team_weapon") or squad.abandoned:
+        return False
+    return len(squad.alive_members) >= 2
+
+
+def abandoned_weapon_near(sim: "Sim", pos: np.ndarray) -> Squad | None:
+    """The nearest abandoned team weapon within `RECREW_RANGE_M` of `pos`."""
+    best: Squad | None = None
+    best_distance = RECREW_RANGE_M
+    for sid in sorted(sim.state.squads):
+        shell = sim.state.squads[sid]
+        if not shell.abandoned:
+            continue
+        distance = float(np.linalg.norm(shell.pos - np.asarray(pos, dtype=float)))
+        if distance <= best_distance and (best is None or distance < best_distance):
+            best, best_distance = shell, distance
+    return best
+
+
+def try_recrew(sim: "Sim", squad: Squad) -> bool:
+    """`squad` has arrived: if it was sent to man an abandoned weapon and is
+    standing next to it, hand the gun over and retire the squad.
+
+    The shell takes the arriving squad's owner and models (capped at the
+    weapon's own crew size -- surplus models are lost), the new member 0
+    takes the team weapon, and the gun starts setting up on the arriving
+    squad's heading. The arriving squad leaves the field like a destroyed
+    one, but as a `weapon_recrewed` rather than a `squad_destroyed`.
+    """
+    shell_id = squad.recrew_target
+    squad.recrew_target = None
+    if shell_id is None:
+        return False
+    shell = sim.state.squads.get(shell_id)
+    if shell is None or not shell.abandoned or not can_recrew(sim, squad):
+        return False
+    if float(np.linalg.norm(shell.pos - squad.pos)) > RECREW_RANGE_M:
+        return False
+    shell_def = sim.data.squads.get(shell.def_id)
+    if shell_def is None or not shell_def.loadout:
+        return False
+
+    from coh.sim.systems import movement
+
+    crew = squad.alive_members[: shell_def.members]
+    shell.owner = squad.owner
+    shell.members = crew
+    _promote_gunner(shell, shell_def.loadout[0])
+    shell.abandoned = False
+    shell.heading = squad.heading
+    shell.facing = squad.heading
+    shell.state = SquadState.SETTING_UP
+    shell.setup_done_tick = sim.state.tick + movement.setup_ticks(sim, shell_def)
+
+    sim.state.squads.pop(squad.id, None)
+    _forget_target(sim, squad.id)
+    sim.state.events.append(
+        Event(
+            kind="weapon_recrewed",
+            tick=sim.state.tick,
+            data={"id": shell.id, "owner": shell.owner, "def_id": shell.def_id,
+                  "by": squad.id, "pos": [float(shell.pos[0]), float(shell.pos[1])]},
+        )
+    )
+    return True
 
 
 def _destroy_squad(sim: "Sim", squad: Squad) -> None:

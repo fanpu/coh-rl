@@ -52,6 +52,25 @@ ATTACK_ORDER_REPATH_S = 1.0
 # order ignores this.
 BUILDING_AUTO_TARGET_MIN_DAMAGE_MULT = 0.25
 
+# --- team weapons / indirect fire (task 10) --------------------------------
+
+# How close an infantry squad must get to an abandoned team weapon to re-crew
+# it, and how close a `Move` target cell must be to the weapon for the order
+# to count as a re-crew order at all. A reach tolerance, not a balance knob.
+RECREW_RANGE_M = 2.0
+
+# After combat automatically swings a team weapon onto a new bearing, it may
+# not do so again for this many `setup_time`s: two (the teardown and setup the
+# turn itself costs) plus one more of actually pointing that way. Without the
+# extra one, two enemies on opposite sides would keep a crew turning forever
+# without ever firing a shot.
+AUTO_REFACE_HOLD_SETUPS = 3
+
+# An explosion's damage falls off linearly from full at the impact point to
+# this fraction at `aoe_radius`. Structural shape of the falloff curve; the
+# radius and the damage itself are gameplay data on the weapon.
+AOE_EDGE_FALLOFF = 0.5
+
 # A building starts construction at this fraction of its full HP and gains the
 # rest in proportion to construction progress (structural, not a balance knob).
 CONSTRUCTION_START_HP_FRAC = 0.1

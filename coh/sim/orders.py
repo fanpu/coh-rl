@@ -228,9 +228,14 @@ def _passable(sim: "Sim", squad: "Squad") -> Any:
 
 
 def apply_move(sim: "Sim", order: Order) -> None:
-    from coh.sim.systems import movement
+    """Walk to the cell -- and remember it if there is an abandoned team
+    weapon there, so that arriving re-crews it (task 10)."""
+    from coh.sim.systems import combat, movement
 
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    if combat.can_recrew(sim, squad):
+        shell = combat.abandoned_weapon_near(sim, center_of(order.cell, CELL_M))  # type: ignore[attr-defined]
+        squad.recrew_target = None if shell is None else shell.id
     movement.start_path(sim, squad, order, order.cell, SquadState.MOVING)  # type: ignore[attr-defined]
 
 
@@ -340,6 +345,32 @@ def apply_attack(sim: "Sim", order: Order) -> None:
     squad.path = []
     squad.attack_last_seen_tick = sim.state.tick
     squad.attack_last_repath_tick = -1
+
+
+def validate_set_facing(sim: "Sim", player: "Player", order: Order) -> OrderResult:
+    """Only a crewed team weapon has a facing worth setting."""
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    sdef = sim.data.squads[squad.def_id]
+    if sdef.kind != "team_weapon":
+        return OrderResult(False, f"squad {squad.id} ({squad.def_id}) is not a team weapon")
+    return OK
+
+
+def apply_set_facing(sim: "Sim", order: Order) -> None:
+    """Tear the gun down and set it up again on the new bearing.
+
+    `direction_deg` is measured from due east (+x) and grows clockwise on
+    screen. World `y` points down, so that is exactly the sense of
+    `atan2(dy, dx)` and the conversion is a plain `radians()`.
+
+    This is an immediate action rather than a standing order, so nothing is
+    left on `squad.order` for later systems to trip over.
+    """
+    from coh.sim.systems import combat
+
+    squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
+    squad.order = None
+    combat.set_facing(sim, squad, math.radians(order.direction_deg), auto=False)  # type: ignore[attr-defined]
 
 
 def validate_capture(sim: "Sim", player: "Player", order: Order) -> OrderResult:
@@ -660,7 +691,7 @@ ORDER_HANDLERS: dict[type[Order], OrderHandler] = {
     Ungarrison: OrderHandler(_accept, apply_squad_order),
     Retreat: OrderHandler(validate_retreat, apply_retreat),
     Reinforce: OrderHandler(validate_reinforce, apply_reinforce),
-    SetFacing: OrderHandler(_accept, apply_squad_order),
+    SetFacing: OrderHandler(validate_set_facing, apply_set_facing),
     Build: OrderHandler(validate_build, apply_build),
     Train: OrderHandler(validate_train, apply_train),
     Research: OrderHandler(validate_research, apply_research),
@@ -692,6 +723,11 @@ def validate_order(sim: "Sim", player_id: int, order: Order) -> OrderResult:
             return OrderResult(False, f"squad {squad.id} owner is player {squad.owner}, not player {player_id}")
         if squad.state is SquadState.RETREATING:
             return OrderResult(False, f"squad {squad.id} is retreating and accepts no orders")
+        # An abandoned team weapon keeps its old `owner` (nothing in the
+        # state can express "unowned"), but it is a crewless object: it takes
+        # no orders from anybody until somebody walks over and re-crews it.
+        if squad.abandoned:
+            return OrderResult(False, f"squad {squad.id} is abandoned and accepts no orders")
 
     if hasattr(order, "building"):
         building = sim.state.buildings.get(order.building)  # type: ignore[attr-defined]
@@ -711,5 +747,15 @@ def validate_order(sim: "Sim", player_id: int, order: Order) -> OrderResult:
 
 
 def apply_order(sim: "Sim", order: Order) -> None:
-    """Apply an order that `validate_order` accepted."""
+    """Apply an order that `validate_order` accepted.
+
+    Any new order cancels a pending re-crew: only `apply_move` sets
+    `recrew_target`, and only when the move is actually aimed at an
+    abandoned team weapon.
+    """
+    squad_id = getattr(order, "squad", None)
+    if squad_id is not None:
+        squad = sim.state.squads.get(squad_id)
+        if squad is not None:
+            squad.recrew_target = None
     ORDER_HANDLERS[type(order)].apply(sim, order)
