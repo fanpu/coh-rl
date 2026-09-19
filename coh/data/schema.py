@@ -12,6 +12,24 @@ from dataclasses import dataclass, field
 
 COVER_TYPES = ("open", "light", "heavy", "negative", "garrison")
 
+# The factions and squad kinds the sim knows how to play.
+FACTIONS = ("us", "wehr")
+SQUAD_KINDS = ("infantry", "team_weapon", "vehicle")
+
+# Territory-point types. Maps tag their points with these (`coh.maps.format`
+# imports this tuple, the same way it imports `COVER_TYPES`), and
+# `economy.point_income` must price every one of them.
+POINT_TYPES = (
+    "strategic",
+    "munitions_low",
+    "munitions_med",
+    "munitions_high",
+    "fuel_low",
+    "fuel_med",
+    "fuel_high",
+    "victory",
+)
+
 
 @dataclass(frozen=True)
 class Cost:

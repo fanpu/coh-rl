@@ -19,6 +19,9 @@ import yaml
 
 from .schema import (
     COVER_TYPES,
+    FACTIONS,
+    POINT_TYPES,
+    SQUAD_KINDS,
     BuildingDef,
     Cost,
     CoverMods,
@@ -45,16 +48,7 @@ TABLE_FILE_NAMES = (
     "neutral.yaml",
 )
 
-_POINT_INCOME_KEYS = {
-    "strategic",
-    "munitions_low",
-    "munitions_med",
-    "munitions_high",
-    "fuel_low",
-    "fuel_med",
-    "fuel_high",
-    "victory",
-}
+_POINT_INCOME_KEYS = set(POINT_TYPES)
 _COST_KEYS = {"manpower", "munitions", "fuel"}
 _TARGET_MOD_KEYS = {"accuracy", "moving", "damage", "penetration", "rear_penetration", "suppression", "priority"}
 _COVER_MOD_KEYS = {"accuracy", "damage", "suppression"}
@@ -85,14 +79,16 @@ def load_game_data(tables_dir: Path | None = None) -> GameData:
             "to load a fixture directory instead"
         )
 
-    weapons = _load_weapons(directory / "weapons.yaml")
+    weapons, generic_target_types = _load_weapons(directory / "weapons.yaml")
     squads = _load_squads(directory / "squads.yaml")
     buildings = _load_buildings(directory / "buildings.yaml")
     upgrades, squad_upgrades = _load_upgrades(directory / "upgrades.yaml")
     neutral = _load_neutral(directory / "neutral.yaml")
     economy = _load_economy(directory / "economy.yaml")
 
-    _cross_validate(weapons, squads, buildings, upgrades, squad_upgrades)
+    _cross_validate(
+        weapons, squads, buildings, upgrades, squad_upgrades, neutral, economy, generic_target_types
+    )
 
     return GameData(
         weapons=weapons,
@@ -149,7 +145,39 @@ def _cost(d: dict[str, Any] | None, path: Path, entry_id: str) -> Cost:
     unknown = set(d) - _COST_KEYS
     if unknown:
         raise DataError(f"{path.name}:{entry_id}: unknown cost key(s) {sorted(unknown)}")
+    for key, value in d.items():
+        if float(value) < 0:
+            raise DataError(f"{path.name}:{entry_id}: cost '{key}' is {value}, must not be negative")
     return Cost(manpower=float(d.get("manpower", 0)), munitions=float(d.get("munitions", 0)), fuel=float(d.get("fuel", 0)))
+
+
+def _non_negative(value: Any, path: Path, entry_id: str, field_name: str) -> float:
+    """A float that a negative value would make meaningless (hp, times, rates)."""
+    number = float(value)
+    if number < 0:
+        raise DataError(f"{path.name}:{entry_id}: '{field_name}' is {number}, must not be negative")
+    return number
+
+
+def _non_negative_tuple(values: tuple[float, ...], path: Path, entry_id: str, field_name: str) -> tuple[float, ...]:
+    for value in values:
+        if value < 0:
+            raise DataError(f"{path.name}:{entry_id}: '{field_name}' contains {value}, must not be negative")
+    return values
+
+
+def _enum(value: Any, allowed: tuple[str, ...], path: Path, entry_id: str, field_name: str) -> str:
+    text = str(value)
+    if text not in allowed:
+        raise DataError(f"{path.name}:{entry_id}: '{field_name}' is {text!r}, expected one of {list(allowed)}")
+    return text
+
+
+def _footprint(value: Any, path: Path, entry_id: str) -> tuple[int, int]:
+    footprint = _tuple(value, 2, path, entry_id, "footprint", cast=int)
+    if footprint[0] < 1 or footprint[1] < 1:
+        raise DataError(f"{path.name}:{entry_id}: 'footprint' is {list(footprint)}, must be at least 1x1")
+    return footprint
 
 
 # --- weapons -----------------------------------------------------------------------
@@ -193,6 +221,8 @@ def _cover_table(d: dict[str, Any] | None, path: Path, entry_id: str) -> dict[st
         unknown = set(mods) - _COVER_MOD_KEYS
         if unknown:
             raise DataError(f"{path.name}:{entry_id}: unknown cover mod key(s) {sorted(unknown)} for '{cover_type}'")
+        for key, value in mods.items():
+            _non_negative(value, path, entry_id, f"cover_table.{cover_type}.{key}")
         result[cover_type] = CoverMods(
             accuracy=float(mods.get("accuracy", 1.0)),
             damage=float(mods.get("damage", 1.0)),
@@ -209,6 +239,9 @@ def _target_table(d: dict[str, Any] | None, path: Path, entry_id: str) -> dict[s
         unknown = set(mods) - _TARGET_MOD_KEYS
         if unknown:
             raise DataError(f"{path.name}:{entry_id}: unknown target mod key(s) {sorted(unknown)} for '{target_type}'")
+        for key, value in mods.items():
+            if key != "priority":  # priority is a sort key and may be negative
+                _non_negative(value, path, entry_id, f"target_table.{target_type}.{key}")
         result[target_type] = TargetMods(
             accuracy=float(mods.get("accuracy", 1.0)),
             moving=float(mods.get("moving", 1.0)),
@@ -221,30 +254,63 @@ def _target_table(d: dict[str, Any] | None, path: Path, entry_id: str) -> dict[s
     return result
 
 
-def _load_weapons(path: Path) -> dict[str, WeaponDef]:
+def _ranges(value: Any, path: Path, entry_id: str) -> tuple[float, ...]:
+    """The three range bands, which must be strictly ascending and positive."""
+    ranges = _tuple(value, 3, path, entry_id, "ranges")
+    if not (0 < ranges[0] < ranges[1] < ranges[2]):
+        raise DataError(
+            f"{path.name}:{entry_id}: 'ranges' {list(ranges)} must be positive and strictly ascending"
+        )
+    return ranges
+
+
+def _load_weapons(path: Path) -> tuple[dict[str, WeaponDef], frozenset[str]]:
+    """The weapon table, plus the optional `generic_target_types` declaration.
+
+    A target type no weapon has a `target_table` row for silently falls back
+    to identity modifiers, which is fine but must be *deliberate*: listing it
+    under the top-level `generic_target_types:` key says so, and
+    `_cross_validate` rejects any other unmatched target type.
+    """
     doc = _read_doc(path)
     body = _table(doc, "weapons", path)
+    generic_raw = doc.get("generic_target_types") or []
+    if not isinstance(generic_raw, list):
+        raise DataError(f"{path.name}: 'generic_target_types' must be a list of target-type names")
+    generic_target_types = frozenset(str(t) for t in generic_raw)
+
     weapons: dict[str, WeaponDef] = {}
     for wid, raw in body.items():
         raw = raw or {}
         _check_keys(raw, _WEAPON_REQUIRED | _WEAPON_OPTIONAL, _WEAPON_REQUIRED, path, wid)
         burst_raw = raw["burst"]
         burst = None if burst_raw is None else _tuple(burst_raw, 2, path, wid, "burst")
+        ranges = _ranges(raw["ranges"], path, wid)
+        min_range = _non_negative(raw["min_range"], path, wid, "min_range")
+        if min_range >= ranges[2]:
+            raise DataError(
+                f"{path.name}:{wid}: 'min_range' {min_range} is not below the weapon's "
+                f"maximum range {ranges[2]} -- the weapon could never fire"
+            )
         weapons[wid] = WeaponDef(
             id=wid,
-            damage=float(raw["damage"]),
-            ranges=_tuple(raw["ranges"], 3, path, wid, "ranges"),
-            min_range=float(raw["min_range"]),
-            accuracy=_tuple(raw["accuracy"], 3, path, wid, "accuracy"),
-            penetration=_tuple(raw["penetration"], 3, path, wid, "penetration"),
-            suppression=_tuple(raw["suppression"], 3, path, wid, "suppression"),
+            damage=_non_negative(raw["damage"], path, wid, "damage"),
+            ranges=ranges,
+            min_range=min_range,
+            accuracy=_non_negative_tuple(_tuple(raw["accuracy"], 3, path, wid, "accuracy"), path, wid, "accuracy"),
+            penetration=_non_negative_tuple(
+                _tuple(raw["penetration"], 3, path, wid, "penetration"), path, wid, "penetration"
+            ),
+            suppression=_non_negative_tuple(
+                _tuple(raw["suppression"], 3, path, wid, "suppression"), path, wid, "suppression"
+            ),
             cooldown=_tuple(raw["cooldown"], 2, path, wid, "cooldown"),
             cooldown_range_mult=_tuple(raw["cooldown_range_mult"], 3, path, wid, "cooldown_range_mult"),
             burst=burst,
             rate_of_fire=float(raw["rate_of_fire"]),
             reload=_tuple(raw["reload"], 2, path, wid, "reload"),
             reload_every=int(raw["reload_every"]),
-            setup_time=float(raw.get("setup_time", 0.0)),
+            setup_time=_non_negative(raw.get("setup_time", 0.0), path, wid, "setup_time"),
             arc_deg=float(raw.get("arc_deg", 360.0)),
             moving_accuracy=float(raw.get("moving_accuracy", 0.0)),
             nearby_suppression_mult=float(raw.get("nearby_suppression_mult", 1.0)),
@@ -256,7 +322,7 @@ def _load_weapons(path: Path) -> dict[str, WeaponDef]:
             cover_table=_cover_table(raw.get("cover_table"), path, wid),
             target_table=_target_table(raw.get("target_table"), path, wid),
         )
-    return weapons
+    return weapons, generic_target_types
 
 
 # --- squads --------------------------------------------------------------------------
@@ -294,11 +360,20 @@ def _load_squads(path: Path) -> dict[str, SquadDef]:
         raw = raw or {}
         _check_keys(raw, _SQUAD_REQUIRED | _SQUAD_OPTIONAL, _SQUAD_REQUIRED, path, sid)
 
+        kind = _enum(raw["kind"], SQUAD_KINDS, path, sid, "kind")
         members = int(raw["members"])
+        if members < 1:
+            raise DataError(f"{path.name}:{sid}: 'members' is {members}, must be at least 1")
+        if kind == "vehicle" and members != 1:
+            raise DataError(f"{path.name}:{sid}: a vehicle must have exactly 1 'members' entry, got {members}")
         loadout_raw = raw["loadout"]
         if not isinstance(loadout_raw, (list, tuple)) or len(loadout_raw) != members:
             raise DataError(f"{path.name}:{sid}: 'loadout' must be a list of length members ({members})")
         loadout = tuple(str(w) for w in loadout_raw)
+        if kind == "team_weapon" and not loadout[0]:
+            raise DataError(
+                f"{path.name}:{sid}: a team weapon's 'loadout' slot 0 must carry the crewed weapon, got an empty slot"
+            )
 
         suppression_raw = raw["suppression"]
         suppression = None
@@ -308,20 +383,20 @@ def _load_squads(path: Path) -> dict[str, SquadDef]:
 
         squads[sid] = SquadDef(
             id=sid,
-            faction=str(raw["faction"]),
-            kind=str(raw["kind"]),
+            faction=_enum(raw["faction"], FACTIONS, path, sid, "faction"),
+            kind=kind,
             members=members,
-            member_hp=float(raw["member_hp"]),
+            member_hp=_non_negative(raw["member_hp"], path, sid, "member_hp"),
             loadout=loadout,
             target_type=str(raw["target_type"]),
             cost=_cost(raw["cost"], path, sid),
             population=int(raw["population"]),
-            build_time=float(raw["build_time"]),
-            upkeep_per_min=float(raw["upkeep_per_min"]),
-            speed=float(raw["speed"]),
-            rotation_deg_s=float(raw["rotation_deg_s"]),
-            sight=float(raw["sight"]),
-            capture_rate=float(raw["capture_rate"]),
+            build_time=_non_negative(raw["build_time"], path, sid, "build_time"),
+            upkeep_per_min=_non_negative(raw["upkeep_per_min"], path, sid, "upkeep_per_min"),
+            speed=_non_negative(raw["speed"], path, sid, "speed"),
+            rotation_deg_s=_non_negative(raw["rotation_deg_s"], path, sid, "rotation_deg_s"),
+            sight=_non_negative(raw["sight"], path, sid, "sight"),
+            capture_rate=_non_negative(raw["capture_rate"], path, sid, "capture_rate"),
             builds=tuple(str(b) for b in raw["builds"]),
             suppression=suppression,
             reinforce_cost_mult=float(raw["reinforce_cost_mult"]),
@@ -361,18 +436,18 @@ def _load_buildings(path: Path) -> dict[str, BuildingDef]:
         _check_keys(raw, _BUILDING_REQUIRED, _BUILDING_REQUIRED, path, bid)
         buildings[bid] = BuildingDef(
             id=bid,
-            faction=str(raw["faction"]),
+            faction=_enum(raw["faction"], FACTIONS, path, bid, "faction"),
             cost=_cost(raw["cost"], path, bid),
-            build_time=float(raw["build_time"]),
-            hp=float(raw["hp"]),
+            build_time=_non_negative(raw["build_time"], path, bid, "build_time"),
+            hp=_non_negative(raw["hp"], path, bid, "hp"),
             target_type=str(raw["target_type"]),
-            footprint=_tuple(raw["footprint"], 2, path, bid, "footprint", cast=int),
+            footprint=_footprint(raw["footprint"], path, bid),
             produces=tuple(str(x) for x in raw["produces"]),
             researches=tuple(str(x) for x in raw["researches"]),
             requires=tuple(str(x) for x in raw["requires"]),
             is_hq=bool(raw["is_hq"]),
-            reinforce_radius=float(raw["reinforce_radius"]),
-            sight=float(raw["sight"]),
+            reinforce_radius=_non_negative(raw["reinforce_radius"], path, bid, "reinforce_radius"),
+            sight=_non_negative(raw["sight"], path, bid, "sight"),
         )
     return buildings
 
@@ -395,9 +470,9 @@ def _load_upgrades(path: Path) -> tuple[dict[str, UpgradeDef], dict[str, SquadUp
         _check_keys(raw, _UPGRADE_REQUIRED | _UPGRADE_OPTIONAL, _UPGRADE_REQUIRED, path, uid)
         upgrades[uid] = UpgradeDef(
             id=uid,
-            faction=str(raw["faction"]),
+            faction=_enum(raw["faction"], FACTIONS, path, uid, "faction"),
             cost=_cost(raw["cost"], path, uid),
-            time=float(raw["time"]),
+            time=_non_negative(raw["time"], path, uid, "time"),
             requires=tuple(str(x) for x in raw["requires"]),
             upkeep_mult=float(raw.get("upkeep_mult", 1.0)),
         )
@@ -410,7 +485,7 @@ def _load_upgrades(path: Path) -> tuple[dict[str, UpgradeDef], dict[str, SquadUp
             id=uid,
             applies_to=tuple(str(x) for x in raw["applies_to"]),
             cost=_cost(raw["cost"], path, uid),
-            time=float(raw["time"]),
+            time=_non_negative(raw["time"], path, uid, "time"),
             requires=tuple(str(x) for x in raw["requires"]),
             weapon=str(raw["weapon"]),
             count=int(raw["count"]),
@@ -433,10 +508,10 @@ def _load_neutral(path: Path) -> dict[str, NeutralBuildingDef]:
         _check_keys(raw, _NEUTRAL_REQUIRED, _NEUTRAL_REQUIRED, path, nid)
         neutral[nid] = NeutralBuildingDef(
             id=nid,
-            hp=float(raw["hp"]),
+            hp=_non_negative(raw["hp"], path, nid, "hp"),
             target_type=str(raw["target_type"]),
             capacity=int(raw["capacity"]),
-            footprint=_tuple(raw["footprint"], 2, path, nid, "footprint", cast=int),
+            footprint=_footprint(raw["footprint"], path, nid),
         )
     return neutral
 
@@ -534,12 +609,127 @@ def _load_economy(path: Path) -> EconomyDef:
 # --- cross-table validation ------------------------------------------------------------
 
 
+def _check_target_types_are_shootable(
+    weapons: dict[str, WeaponDef],
+    squads: dict[str, SquadDef],
+    buildings: dict[str, BuildingDef],
+    neutral: dict[str, NeutralBuildingDef],
+    generic_target_types: frozenset[str],
+) -> None:
+    """Every target type must be priced by some weapon, or declared generic.
+
+    `WeaponDef.vs` falls back to identity modifiers for an unknown target
+    type, so a typo in one `target_type` would otherwise make a whole unit
+    class quietly immune to nothing in particular.
+    """
+    priced = {target_type for weapon in weapons.values() for target_type in weapon.target_table}
+    priced |= generic_target_types
+    for file_name, table in (
+        ("squads.yaml", squads),
+        ("buildings.yaml", buildings),
+        ("neutral.yaml", neutral),
+    ):
+        for entry_id, entry in table.items():
+            if entry.target_type not in priced:
+                raise DataError(
+                    f"{file_name}:{entry_id}: target_type '{entry.target_type}' has no row in any weapon's "
+                    "target_table; add one, or list it under weapons.yaml's 'generic_target_types'"
+                )
+
+
+def _check_requires_has_no_cycles(
+    buildings: dict[str, BuildingDef], upgrades: dict[str, UpgradeDef]
+) -> None:
+    """`requires` spans both tables, so the cycle check has to as well."""
+    edges: dict[str, tuple[str, ...]] = {}
+    origin: dict[str, str] = {}
+    for bid, b in buildings.items():
+        edges[bid] = b.requires
+        origin[bid] = "buildings.yaml"
+    for uid, u in upgrades.items():
+        edges.setdefault(uid, u.requires)
+        origin.setdefault(uid, "upgrades.yaml")
+
+    visiting: list[str] = []
+    done: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in done:
+            return
+        if node in visiting:
+            loop = visiting[visiting.index(node):] + [node]
+            raise DataError(f"{origin[node]}:{node}: 'requires' cycle {' -> '.join(loop)}")
+        visiting.append(node)
+        for parent in edges.get(node, ()):
+            if parent in edges:
+                visit(parent)
+        visiting.pop()
+        done.add(node)
+
+    for node in edges:
+        visit(node)
+
+
+def _check_every_faction_can_play(
+    squads: dict[str, SquadDef],
+    buildings: dict[str, BuildingDef],
+    upgrades: dict[str, UpgradeDef],
+) -> None:
+    """A faction with an HQ must be able to build and to take territory.
+
+    Walks the tech tree out from each faction's HQ -- what the HQ produces,
+    what those squads build, what those buildings produce and research -- and
+    insists the closure contains a builder and a capture-capable squad.
+    """
+    for faction in sorted({b.faction for b in buildings.values() if b.is_hq}):
+        hq = next(b for b in buildings.values() if b.is_hq and b.faction == faction)
+        reachable_buildings = {hq.id}
+        reachable_upgrades: set[str] = set()
+        reachable_squads: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for bid in sorted(reachable_buildings):
+                bdef = buildings[bid]
+                for unit in bdef.produces:
+                    if unit in squads and unit not in reachable_squads:
+                        reachable_squads.add(unit)
+                        changed = True
+                for upgrade_id in bdef.researches:
+                    if upgrade_id in upgrades and upgrade_id not in reachable_upgrades:
+                        reachable_upgrades.add(upgrade_id)
+                        changed = True
+            unlocked = reachable_buildings | reachable_upgrades
+            for sid in sorted(reachable_squads):
+                for structure in squads[sid].builds:
+                    bdef = buildings.get(structure)
+                    if bdef is None or bdef.faction != faction or structure in reachable_buildings:
+                        continue
+                    if all(req in unlocked for req in bdef.requires):
+                        reachable_buildings.add(structure)
+                        changed = True
+
+        if not any(squads[sid].builds for sid in reachable_squads):
+            raise DataError(
+                f"buildings.yaml:{hq.id}: faction '{faction}' can never build anything -- no squad reachable "
+                "from its HQ has a non-empty 'builds'"
+            )
+        if not any(squads[sid].capture_rate > 0 for sid in reachable_squads):
+            raise DataError(
+                f"squads.yaml: faction '{faction}' can never capture a point -- no squad reachable from its "
+                "HQ has capture_rate > 0"
+            )
+
+
 def _cross_validate(
     weapons: dict[str, WeaponDef],
     squads: dict[str, SquadDef],
     buildings: dict[str, BuildingDef],
     upgrades: dict[str, UpgradeDef],
     squad_upgrades: dict[str, SquadUpgradeDef],
+    neutral: dict[str, NeutralBuildingDef],
+    economy: EconomyDef,
+    generic_target_types: frozenset[str],
 ) -> None:
     for sid, sq in squads.items():
         for w in sq.loadout:
@@ -548,6 +738,13 @@ def _cross_validate(
         for b in sq.builds:
             if b not in buildings:
                 raise DataError(f"squads.yaml:{sid}: builds '{b}' not found in buildings")
+        if sq.kind == "team_weapon":
+            crewed = weapons.get(sq.loadout[0])
+            if crewed is not None and crewed.setup_time <= 0:
+                raise DataError(
+                    f"squads.yaml:{sid}: the crewed weapon '{sq.loadout[0]}' has setup_time "
+                    f"{crewed.setup_time}; a team weapon must take time to deploy"
+                )
 
     for uid, su in squad_upgrades.items():
         if su.weapon not in weapons:
@@ -583,3 +780,21 @@ def _cross_validate(
     for faction, count in hq_counts.items():
         if count != 1:
             raise DataError(f"buildings.yaml: faction '{faction}' has {count} is_hq building(s), expected exactly 1")
+
+    for faction in sorted({b.faction for b in buildings.values()}):
+        op_id = economy.op_building.get(faction)
+        if op_id is None:
+            raise DataError(f"economy.yaml:economy: op_building has no entry for faction '{faction}'")
+        if op_id not in buildings:
+            raise DataError(f"economy.yaml:economy: op_building['{faction}'] = '{op_id}' is not a building")
+
+    missing_income = [point_type for point_type in POINT_TYPES if point_type not in economy.point_income]
+    if missing_income:
+        raise DataError(
+            f"economy.yaml:economy: point_income is missing point type(s) {missing_income}; "
+            "every type a map may use must be priced"
+        )
+
+    _check_target_types_are_shootable(weapons, squads, buildings, neutral, generic_target_types)
+    _check_requires_has_no_cycles(buildings, upgrades)
+    _check_every_faction_can_play(squads, buildings, upgrades)
