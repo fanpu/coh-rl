@@ -7,14 +7,14 @@ import numpy as np
 from coh.maps.cover import cover_at
 from coh.maps.format import center_of, map_from_ascii
 
-# 12x8 map: wall at (4,5); open unit cell east of it at (5,5); crater at
-# (4,3); road at (2,1).
+# 12x8 map: wall at (4,5); fence at (4,4); open unit cell east of both at
+# (5,5); crater at (4,3); road at (2,1).
 TERRAIN = [
     "............",
     "..r.........",
     "............",
     "....c.......",
-    "............",
+    "....f.......",
     "....w.......",
     "............",
     "............",
@@ -47,6 +47,16 @@ def test_wall_no_cover_from_opposite_side():
     unit_cell = (5, 5)
     shooter_east = center_of((11, 5))
     assert cover_at(m, unit_cell, shooter_east) == "open"
+
+
+def test_heavy_beats_light_when_both_in_cone():
+    # unit_cell (5,5) has a heavy wall due west at (4,5) (0 degrees off the
+    # shooter direction) and a light fence northwest at (4,4) (45 degrees
+    # off) -- both qualify (<=60 degrees), heavy must win.
+    m = make_map()
+    unit_cell = (5, 5)
+    shooter_west = center_of((0, 5))
+    assert cover_at(m, unit_cell, shooter_west) == "heavy"
 
 
 def test_crater_cover_any_direction():

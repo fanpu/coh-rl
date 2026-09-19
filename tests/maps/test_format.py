@@ -307,6 +307,22 @@ def test_hq_cell_impassable_raises():
         make_map(starts=bad_starts)
 
 
+def test_hq_cell_out_of_bounds_raises():
+    bad_starts = [
+        {"slot": 0, "team": 0, "hq_cell": [0, 0], "sector": "A"},
+        {"slot": 1, "team": 1, "hq_cell": [12, 0], "sector": "B"},  # width is 12, cols 0-11
+    ]
+    with pytest.raises(MapError):
+        make_map(starts=bad_starts)
+
+
+def test_unknown_terrain_character_raises():
+    bad_terrain = list(TERRAIN)
+    bad_terrain[0] = "X" + bad_terrain[0][1:]
+    with pytest.raises(MapError):
+        make_map(terrain_rows=bad_terrain)
+
+
 def test_point_unreachable_from_hq_raises():
     # Wall off the victory point entirely with impassable 'w' cells.
     terrain = [

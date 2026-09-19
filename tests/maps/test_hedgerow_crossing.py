@@ -83,20 +83,26 @@ def test_point_types_180_rotationally_symmetric(hedgerow_map):
 
 def test_every_point_reachable_by_infantry_from_both_hqs(hedgerow_map):
     m = hedgerow_map
-    starts = [tuple(s.hq_cell) for s in m.starts]
-    reached = _bfs_reachable(m.pass_inf, starts)
-    for p in m.points.values():
-        x, y = p.cell
-        assert reached[y, x], f"point {p.id!r} at {p.cell} unreachable by infantry"
+    for start in m.starts:
+        reached = _bfs_reachable(m.pass_inf, [tuple(start.hq_cell)])
+        for p in m.points.values():
+            x, y = p.cell
+            assert reached[y, x], (
+                f"point {p.id!r} at {p.cell} unreachable by infantry from "
+                f"HQ slot {start.slot} at {start.hq_cell}"
+            )
 
 
 def test_every_point_reachable_by_vehicle_from_both_hqs(hedgerow_map):
     m = hedgerow_map
-    starts = [tuple(s.hq_cell) for s in m.starts]
-    reached = _bfs_reachable(m.pass_veh, starts)
-    for p in m.points.values():
-        x, y = p.cell
-        assert reached[y, x], f"point {p.id!r} at {p.cell} unreachable by vehicle"
+    for start in m.starts:
+        reached = _bfs_reachable(m.pass_veh, [tuple(start.hq_cell)])
+        for p in m.points.values():
+            x, y = p.cell
+            assert reached[y, x], (
+                f"point {p.id!r} at {p.cell} unreachable by vehicle from "
+                f"HQ slot {start.slot} at {start.hq_cell}"
+            )
 
 
 def test_hq_areas_have_12x12_open_buildable_ground(hedgerow_map):
