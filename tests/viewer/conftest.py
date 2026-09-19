@@ -1,10 +1,18 @@
-"""Replays the viewer tests build frames from, plus a hard per-test deadline."""
+"""Shared viewer-test scaffolding: replays, the browser harness, and a deadline.
+
+The browser pieces live here rather than in one test module so that several
+modules (`test_viewer_browser.py`, `test_viewer_fog.py`) share a single
+Chromium instance and a single served frame stream.
+"""
 
 from __future__ import annotations
 
 import contextlib
+import http.server
 import signal
+import socketserver
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +21,10 @@ from coh.env import CohEnv
 from coh.maps.format import load_map
 from coh.replay.replay import Replay
 from coh.sim.sim import PlayerSetup, SimConfig, neutral_footprints
+from coh.viewer.__main__ import STATIC_DIR, make_handler
+from coh.viewer.frames import build_frames, frames_json_gz
 from tests.helpers import fixture_data
+from tests.viewer.chromium import find_chromium
 
 MAP_NAME = "hedgerow_crossing"
 SHORT_MATCH_S = 30.0
@@ -23,7 +34,7 @@ def play(seconds: float, agent: str = "t1", seed: int = 0) -> Replay:
     """Play `seconds` of `hedgerow_crossing` on fixture data and return the replay."""
     data = fixture_data()
     game_map = load_map(MAP_NAME, footprints=neutral_footprints(data))
-    players = [PlayerSetup("us", 0, 0), PlayerSetup("us", 1, 1)]
+    players = [PlayerSetup("us", 0, 0), PlayerSetup("wehr", 1, 1)]
     env = CohEnv(
         map_name=MAP_NAME,
         players=players,
@@ -69,7 +80,14 @@ class DeadlineExceeded(AssertionError):
 
 @contextlib.contextmanager
 def deadline(seconds: float, what: str):
-    """Fail the test if the body has not finished within `seconds`."""
+    """Fail the test if the body has not finished within `seconds`.
+
+    NOT nesting-safe: there is only one interval timer per process, so an inner
+    `deadline` overwrites the outer one's alarm and, on exit, disarms it
+    entirely — the outer budget is silently lost. Use one per call stack. The
+    module-scoped fixtures and the autouse per-test guard never overlap
+    (fixture setup finishes before the test body starts).
+    """
     if not _CAN_ALARM or threading.current_thread() is not threading.main_thread():
         yield
         return
@@ -84,3 +102,157 @@ def deadline(seconds: float, what: str):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
+
+
+# ---------------------------------------------------------------------------
+# Browser harness
+# ---------------------------------------------------------------------------
+
+CHROMIUM = find_chromium()
+DOC_IMAGES = Path(__file__).resolve().parents[2] / "docs" / "img"
+
+MATCH_S = 120.0          # long enough for captures, training and firefights
+ACTION_MS = 15_000       # any single Playwright action
+NAV_MS = 20_000          # page load
+TEST_DEADLINE_S = 90.0   # hard ceiling per test
+SETUP_DEADLINE_S = 90.0  # hard ceiling for module-scoped setup
+LAUNCH_ARGS = ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+
+needs_chromium = pytest.mark.skipif(CHROMIUM is None, reason="no Chromium/Chrome binary on this machine")
+
+
+def playwright_or_skip():
+    """`sync_playwright`, or skip the whole module if Playwright is absent."""
+    return pytest.importorskip("playwright.sync_api", reason="playwright is not installed").sync_playwright
+
+
+@pytest.fixture(autouse=True)
+def hard_deadline(request):
+    if "page" not in request.fixturenames and "browser" not in request.fixturenames:
+        yield
+        return
+    with deadline(TEST_DEADLINE_S, request.node.name):
+        yield
+
+
+class _Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def _serve(handler_cls):
+    """Run `handler_cls` on an ephemeral port; yields the URL, always shuts down."""
+    server = _Server(("127.0.0.1", 0), handler_cls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield "http://127.0.0.1:%d/" % server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+        assert not thread.is_alive(), "the frames server thread did not stop"
+
+
+@pytest.fixture(scope="session")
+def viewer_url():
+    """Serve one match's frames on an ephemeral port for the whole session."""
+    with deadline(SETUP_DEADLINE_S, "building the frame stream"):
+        frames = build_frames(play(MATCH_S), 2, data=fixture_data())
+    yield from _serve(make_handler(frames_json_gz(frames)))
+
+
+@pytest.fixture(scope="session")
+def broken_url():
+    """Serve the page but no frames, to exercise the client's error path."""
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    yield from _serve(Handler)
+
+
+@pytest.fixture(scope="session")
+def browser():
+    if CHROMIUM is None:
+        pytest.skip("no Chromium/Chrome binary on this machine")
+    with playwright_or_skip()() as pw:
+        with deadline(SETUP_DEADLINE_S, "launching Chromium"):
+            instance = pw.chromium.launch(executable_path=CHROMIUM, args=LAUNCH_ARGS)
+        try:
+            yield instance
+        finally:
+            instance.close()
+
+
+def open_page(browser, url, width=1280, height=860):
+    """A page with explicit timeouts everywhere; never auto-plays."""
+    pg = browser.new_page(viewport={"width": width, "height": height})
+    pg.set_default_timeout(ACTION_MS)
+    pg.set_default_navigation_timeout(NAV_MS)
+    errors: list[str] = []
+    pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    pg.on("pageerror", lambda e: errors.append("pageerror: %s" % e))
+    pg.errors = errors
+    pg.goto(url + "#paused", wait_until="load", timeout=NAV_MS)
+    return pg
+
+
+def wait_loaded(pg, tries=60, gap_ms=250):
+    """Poll (rather than `wait_for_function`, which proved flaky on this page)."""
+    for _ in range(tries):
+        if pg.evaluate("!!(window.__viewer && window.__viewer.state().frames)"):
+            return
+        pg.wait_for_timeout(gap_ms)
+    raise AssertionError("the frame stream never finished loading")
+
+
+@pytest.fixture
+def page(browser, viewer_url):
+    """A freshly loaded, paused viewer page; `page.errors` collects console errors."""
+    pg = open_page(browser, viewer_url)
+    try:
+        wait_loaded(pg)
+        assert pg.evaluate("window.__viewer.state().playing") is False, "#paused should not auto-play"
+        yield pg
+    finally:
+        pg.close()
+
+
+def shoot(pg, path):
+    """Force a synchronous redraw, then capture (never wait on rAF timing)."""
+    pg.evaluate("window.__viewer.redraw()")
+    pg.screenshot(path=str(path), timeout=ACTION_MS)
+
+
+def canvas_variance(pg):
+    """Spread of the rendered pixels — a blank canvas scores ~0."""
+    return pg.evaluate(
+        """(() => {
+          var cv = document.getElementById('cv');
+          var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+          var n = 0, sum = 0, sq = 0;
+          for (var i = 0; i < d.length; i += 4 * 97) {
+            var v = (d[i] + d[i + 1] + d[i + 2]) / 3;
+            n++; sum += v; sq += v * v;
+          }
+          return sq / n - (sum / n) * (sum / n);
+        })()"""
+    )
+
+
+def canvas_digest(pg):
+    """A cheap fingerprint of the rendered pixels, to prove a redraw changed something."""
+    return pg.evaluate(
+        """(() => {
+          var cv = document.getElementById('cv');
+          var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+          var h = 2166136261;
+          for (var i = 0; i < d.length; i += 4 * 31) { h ^= d[i] + d[i + 1] * 3 + d[i + 2] * 7; h = (h * 16777619) | 0; }
+          return h;
+        })()"""
+    )
