@@ -9,7 +9,7 @@ import textwrap
 import numpy as np
 import pytest
 
-from coh.maps.format import cell_of, center_of
+from coh.maps.format import GameMap, cell_of, center_of
 from coh.sim import orders as orders_mod
 from coh.sim import systems
 from coh.sim.orders import (
@@ -122,7 +122,7 @@ def test_connected_sectors_start_as_sorted_lists_of_hq_sectors():
         assert sector in connected
 
 
-def test_neutral_buildings_are_placed_and_not_double_stamped():
+def test_neutral_buildings_are_placed_as_entities():
     sim = make_sim(neutral_buildings=[{"def": "house", "cell": [18, 10]}])
     neutral = [b for b in sim.state.buildings.values() if b.neutral]
     assert len(neutral) == 1
@@ -133,9 +133,26 @@ def test_neutral_buildings_are_placed_and_not_double_stamped():
 
     w, h = sim.data.neutral["house"].footprint
     assert not sim.map.pass_inf[10 : 10 + h, 18 : 18 + w].any()
-    # un-stamping restores the underlying open terrain: proves it was stamped once
-    sim.map.stamp_footprint((18, 10), (w, h), blocked=False)
-    assert sim.map.pass_inf[10 : 10 + h, 18 : 18 + w].all()
+
+
+def test_neutral_footprints_are_not_stamped_again_by_the_sim(monkeypatch):
+    """`load_map` already stamped them; re-stamping would inflate `map.version`."""
+    game_map = make_map(neutral_buildings=[{"def": "house", "cell": [18, 10]}, {"def": "house", "cell": [24, 20]}])
+    assert game_map.version == 0  # load_map stamped the neutral footprints already
+
+    stamped: list[tuple[int, int]] = []
+    original = GameMap.stamp_footprint
+
+    def spy(self, cell, size, blocked):
+        stamped.append(cell)
+        return original(self, cell, size, blocked)
+
+    monkeypatch.setattr(GameMap, "stamp_footprint", spy)
+    sim = make_sim(game_map=game_map)
+
+    hq_cells = [sim.state.buildings[p.hq_id].cell for p in sim.state.players.values()]
+    assert stamped == hq_cells  # the two HQs, and nothing else
+    assert sim.map.version == len(hq_cells)
 
 
 def test_entity_ids_share_one_counter():

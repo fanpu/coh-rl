@@ -19,7 +19,7 @@ function:
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, get_origin, get_type_hints
 
 from coh.sim.state import SquadState
 
@@ -135,6 +135,18 @@ ORDER_TYPES: dict[str, type[Order]] = {
 }
 
 
+# Fields declared as tuples, which `order_to_dict` writes out as JSON lists and
+# `order_from_dict` must turn back into tuples (order equality depends on it).
+TUPLE_FIELDS: dict[type[Order], frozenset[str]] = {
+    cls: frozenset(
+        f.name
+        for f in fields(cls)
+        if get_origin(get_type_hints(cls)[f.name]) is tuple
+    )
+    for cls in ORDER_TYPES.values()
+}
+
+
 @dataclass(frozen=True)
 class OrderResult:
     ok: bool
@@ -166,16 +178,14 @@ def order_from_dict(d: dict[str, Any]) -> Order:
     cls = ORDER_TYPES.get(name)
     if cls is None:
         raise ValueError(f"unknown order type {name!r} (known: {sorted(ORDER_TYPES)})")
-    expected = {f.name: f for f in fields(cls)}
+    expected = {f.name for f in fields(cls)}
     given = {k: v for k, v in d.items() if k != "type"}
-    if set(given) != set(expected):
+    if set(given) != expected:
         raise ValueError(
             f"{name}: expected field(s) {sorted(expected)}, got {sorted(given)}"
         )
-    kwargs = {
-        key: tuple(value) if "tuple" in str(expected[key].type) else value
-        for key, value in given.items()
-    }
+    tuple_fields = TUPLE_FIELDS[cls]
+    kwargs = {key: tuple(value) if key in tuple_fields else value for key, value in given.items()}
     return cls(**kwargs)
 
 

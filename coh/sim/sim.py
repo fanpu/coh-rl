@@ -173,10 +173,10 @@ class Sim:
         self.state.points[sector.point_id] = PointState(owner_team=team, progress=1.0)
 
     def _place_neutral_buildings(self) -> None:
-        # Footprints are already stamped impassable by `load_map`, so this
-        # only creates the entities.
+        # `load_map` already stamped these footprints impassable, so this only
+        # creates the entities (`stamp=False` keeps `map.version` accurate).
         for placement in self.map.neutral_buildings:
-            self.spawn_building(None, placement.def_id, placement.cell)
+            self.spawn_building(None, placement.def_id, placement.cell, stamp=False)
 
     # -- entity creation --------------------------------------------------
 
@@ -203,12 +203,20 @@ class Sim:
         return squad
 
     def spawn_building(
-        self, owner: int | None, def_id: str, cell: tuple[int, int], complete: bool = True
+        self,
+        owner: int | None,
+        def_id: str,
+        cell: tuple[int, int],
+        complete: bool = True,
+        *,
+        stamp: bool = True,
     ) -> Building:
         """Create a building and stamp its footprint impassable.
 
         `def_id` may name a player building (`data.buildings`) or a neutral,
         enterable one (`data.neutral`); neutral defs always spawn unowned.
+        Pass `stamp=False` when the footprint is already blocked on the map
+        (neutral placements, which `load_map` stamps).
         """
         if def_id in self.data.buildings:
             bdef = self.data.buildings[def_id]
@@ -234,7 +242,8 @@ class Sim:
             neutral=neutral,
         )
         self.state.buildings[building.id] = building
-        self.map.stamp_footprint(building.cell, footprint, blocked=True)
+        if stamp:
+            self.map.stamp_footprint(building.cell, footprint, blocked=True)
         return building
 
     # -- orders / tick ----------------------------------------------------
