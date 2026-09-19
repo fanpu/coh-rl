@@ -1,0 +1,17 @@
+source: "Hand-written fixture data for tests. Round numbers, not sourced from CoH1."
+
+upgrades:
+  research_1:
+    faction: us
+    cost: {manpower: 100, munitions: 50}
+    time: 30
+    requires: []
+
+squad_upgrades:
+  bar_upgrade:
+    applies_to: [rifles]
+    cost: {munitions: 60}
+    time: 20
+    requires: [research_1]
+    weapon: rifle
+    count: 1

@@ -1,0 +1,37 @@
+source: "Hand-written fixture data for tests. Round numbers, not sourced from CoH1."
+estimated:
+  economy.garrison_collapse_damage_frac: "Placeholder for M1; used by Task 12 garrison collapse damage."
+  economy.min_manpower_income_frac: "Placeholder for M1; used by Task 14 income floor."
+
+economy:
+  start_resources: {manpower: 300, munitions: 0, fuel: 0}
+  base_income_per_min: {manpower: 240, munitions: 0, fuel: 0}
+  base_population: 20
+  max_population: 100
+  point_income:
+    strategic: {manpower: 8}
+    munitions_low: {munitions: 4}
+    munitions_med: {munitions: 8}
+    munitions_high: {munitions: 12}
+    fuel_low: {fuel: 2}
+    fuel_med: {fuel: 4}
+    fuel_high: {fuel: 6}
+    victory: {}
+  op_income_mult: 1.5
+  op_building: {us: op_us, wehr: op_wehr}
+  capture_time_s: 8
+  neutralize_time_s: 4
+  capture_radius: 10
+  tickets: 300
+  ticket_interval_s: 30
+  tickets_per_vp_lead: 1
+  retreat_speed_mult: 1.5
+  suppressed_speed_mult: 0.5
+  suppressed_accuracy_mult: 0.5
+  suppressed_cooldown_mult: 1.5
+  noncombat_recovery_delay_s: 5
+  noncombat_recovery_mult: 2.0
+  cover_recovery_mult: {open: 1.0, light: 1.2, heavy: 1.5, negative: 0.8, garrison: 2.0}
+  reinforce_base_cost_frac: 0.5
+  garrison_collapse_damage_frac: 0.25
+  min_manpower_income_frac: 0.25

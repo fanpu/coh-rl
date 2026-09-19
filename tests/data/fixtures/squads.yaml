@@ -1,0 +1,141 @@
+source: "Hand-written fixture data for tests. Round numbers, not sourced from CoH1."
+
+squads:
+  rifles:
+    faction: us
+    kind: infantry
+    members: 4
+    member_hp: 80
+    loadout: [rifle, rifle, rifle, rifle]
+    target_type: infantry
+    cost: {manpower: 240}
+    population: 5
+    build_time: 20
+    upkeep_per_min: 3
+    speed: 3.0
+    rotation_deg_s: 180
+    sight: 25
+    capture_rate: 1.0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 1
+    can_garrison: true
+
+  engineers:
+    faction: us
+    kind: infantry
+    members: 4
+    member_hp: 60
+    loadout: ["", "", "", ""]
+    target_type: infantry
+    cost: {manpower: 200}
+    population: 4
+    build_time: 15
+    upkeep_per_min: 2
+    speed: 3.0
+    rotation_deg_s: 180
+    sight: 20
+    capture_rate: 1.0
+    builds: [barracks]
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true
+
+  hmg_team:
+    faction: us
+    kind: team_weapon
+    members: 3
+    member_hp: 60
+    loadout: [hmg, "", ""]
+    target_type: infantry
+    cost: {manpower: 280, munitions: 20}
+    population: 5
+    build_time: 25
+    upkeep_per_min: 3
+    speed: 2.0
+    rotation_deg_s: 90
+    sight: 25
+    capture_rate: 0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true
+
+  at_team:
+    faction: us
+    kind: team_weapon
+    members: 3
+    member_hp: 60
+    loadout: [at_gun, "", ""]
+    target_type: infantry
+    cost: {manpower: 320, munitions: 40}
+    population: 6
+    build_time: 30
+    upkeep_per_min: 3
+    speed: 2.0
+    rotation_deg_s: 90
+    sight: 30
+    capture_rate: 0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true
+
+  mortar_team:
+    faction: us
+    kind: team_weapon
+    members: 3
+    member_hp: 60
+    loadout: [mortar, "", ""]
+    target_type: infantry
+    cost: {manpower: 300, munitions: 30}
+    population: 6
+    build_time: 30
+    upkeep_per_min: 3
+    speed: 2.0
+    rotation_deg_s: 90
+    sight: 25
+    capture_rate: 0
+    builds: []
+    suppression: {suppress_at: 0.5, suppress_recover: 0.4, pin_at: 1.0, pin_recover: 0.8, recovery_per_s: 0.05}
+    reinforce_cost_mult: 1.0
+    reinforce_time_mult: 1.0
+    retreat_received_accuracy: 0.5
+    upgrade_slots: 0
+    can_garrison: true
+
+  tank:
+    faction: wehr
+    kind: vehicle
+    members: 1
+    member_hp: 400
+    loadout: [tank_gun]
+    target_type: armour_tank
+    cost: {munitions: 60, fuel: 120}
+    population: 10
+    build_time: 60
+    upkeep_per_min: 0
+    speed: 4.0
+    rotation_deg_s: 45
+    sight: 30
+    capture_rate: 0
+    builds: []
+    suppression: null
+    reinforce_cost_mult: 0
+    reinforce_time_mult: 0
+    retreat_received_accuracy: 1.0
+    upgrade_slots: 0
+    crushes_light_cover: true
+    can_garrison: false

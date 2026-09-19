@@ -1,0 +1,72 @@
+source: "Hand-written fixture data for tests. Round numbers, not sourced from CoH1."
+
+buildings:
+  hq_us:
+    faction: us
+    cost: {}
+    build_time: 0
+    hp: 1000
+    target_type: building_heavy
+    footprint: [4, 4]
+    produces: [engineers]
+    researches: [research_1]
+    requires: []
+    is_hq: true
+    reinforce_radius: 20
+    sight: 30
+
+  hq_wehr:
+    faction: wehr
+    cost: {}
+    build_time: 0
+    hp: 1000
+    target_type: building_heavy
+    footprint: [4, 4]
+    produces: []
+    researches: []
+    requires: []
+    is_hq: true
+    reinforce_radius: 20
+    sight: 30
+
+  barracks:
+    faction: us
+    cost: {manpower: 200}
+    build_time: 30
+    hp: 600
+    target_type: building_light
+    footprint: [3, 3]
+    produces: [rifles, hmg_team, at_team, mortar_team]
+    researches: []
+    requires: [hq_us]
+    is_hq: false
+    reinforce_radius: 15
+    sight: 20
+
+  op_us:
+    faction: us
+    cost: {}
+    build_time: 0
+    hp: 200
+    target_type: building_light
+    footprint: [2, 2]
+    produces: []
+    researches: []
+    requires: []
+    is_hq: false
+    reinforce_radius: 0
+    sight: 15
+
+  op_wehr:
+    faction: wehr
+    cost: {}
+    build_time: 0
+    hp: 200
+    target_type: building_light
+    footprint: [2, 2]
+    produces: []
+    researches: []
+    requires: []
+    is_hq: false
+    reinforce_radius: 0
+    sight: 15

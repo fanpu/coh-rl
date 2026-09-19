@@ -1,0 +1,8 @@
+source: "Hand-written fixture data for tests. Round numbers, not sourced from CoH1."
+
+neutral:
+  house:
+    hp: 400
+    target_type: building_light
+    capacity: 6
+    footprint: [2, 2]
