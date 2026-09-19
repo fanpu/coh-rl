@@ -176,32 +176,38 @@ def test_garrisoned_squad_sees_from_building_centre():
 def test_ghost_persists_after_losing_sight_and_disappears_after_rescout():
     sim = make_sim()  # default 40x30 map, opposite-corner HQs
     enemy_hq = sim.state.buildings[sim.state.players[1].hq_id]
-    ex, ey = enemy_hq.cell
-    scout_cell = (ex - 4, ey)  # within rifles' 25m sight, open terrain
+    hx, hy = enemy_hq.cell
+    # A separate enemy building near (not on) the HQ footprint (4x4), so
+    # deleting it to fake destruction doesn't touch the real HQ and end the
+    # game via annihilation (task 15).
+    building_cell = (hx, hy - 4)
+    enemy_building = sim.spawn_building(1, "barracks", building_cell)
+    bx, by = enemy_building.cell
+    scout_cell = (bx - 4, by)  # within rifles' 25m sight, open terrain
     scout = spawn(sim, 0, "rifles", scout_cell)
 
     sim.tick()
-    assert enemy_hq.id in sim.state.ghosts[0]
-    ghost = sim.state.ghosts[0][enemy_hq.id]
+    assert enemy_building.id in sim.state.ghosts[0]
+    ghost = sim.state.ghosts[0][enemy_building.id]
     assert ghost.hp_frac == 1.0
     assert ghost.owner == 1
-    assert ghost.cell == enemy_hq.cell
+    assert ghost.cell == enemy_building.cell
 
     # move the scout far away: vision is lost, but the ghost persists.
     scout.pos = center_of((1, 1))
     sim.tick()
-    assert enemy_hq.id in sim.state.ghosts[0]
-    assert not vision.is_visible(sim, 0, enemy_hq)
+    assert enemy_building.id in sim.state.ghosts[0]
+    assert not vision.is_visible(sim, 0, enemy_building)
 
     # the building is destroyed while out of sight: ghost still persists.
-    del sim.state.buildings[enemy_hq.id]
+    del sim.state.buildings[enemy_building.id]
     sim.tick()
-    assert enemy_hq.id in sim.state.ghosts[0]
+    assert enemy_building.id in sim.state.ghosts[0]
 
     # re-scouting the (now-empty) cell clears the ghost.
     scout.pos = center_of(scout_cell)
     sim.tick()
-    assert enemy_hq.id not in sim.state.ghosts[0]
+    assert enemy_building.id not in sim.state.ghosts[0]
 
 
 def test_ghost_not_created_for_neutral_building():
