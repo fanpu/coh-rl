@@ -11,6 +11,43 @@ uv run python scripts/play_match.py
 uv run python -m coh.viewer <replay>
 ```
 
+## Performance
+
+`scripts/bench_sim.py` measures simulation throughput and breaks it down per
+tick system. It times each system by wrapping the module's `run` from the
+script, so no timing code lives inside `coh/sim`.
+
+```
+# the number that matters for RL: 30 squads a side, mixed arms, fighting flat out
+uv run python scripts/bench_sim.py --stress --data-dir tests/data/fixtures --seconds 600
+
+# a scripted T1-vs-T1 match (includes the agents and build_observation)
+uv run python scripts/bench_sim.py --data-dir tests/data/fixtures --seconds 600
+
+# add --profile 30 for a cProfile table on top of the per-system breakdown
+```
+
+Single core, Python 3.12, `hedgerow_crossing`, fixture tables (a Ryzen
+dev box; treat the ratios as the durable part):
+
+| mode | before task 18 | now |
+| --- | --- | --- |
+| `--stress`, first 20 game-s (full 60-squad army) | 817 ticks/s | **1085 ticks/s** |
+| `--stress`, default 600 game-s (army attrits) | 3330 ticks/s | 4038 ticks/s |
+| T1-vs-T1 match, 600 game-s | 6628 ticks/s | 7365 ticks/s |
+
+1085 ticks/s is ~136 game-seconds per wall-second with 60 squads on the field,
+so a 25-minute match costs about 11 wall-seconds at that load. Where the time
+goes in the stress mode is combat ~54% (target acquisition and bullet
+resolution), vision ~25%, suppression ~8%, territory ~5%, everything else under
+3% each. The remaining hotspot is per-squad target acquisition: it is already
+filtered by a squared-distance pass over a per-tick position array, and the
+next real step would be a coarse spatial hash so a squad only ever looks at
+enemies in neighbouring buckets.
+
+`tests/scenarios/test_perf.py` keeps a loose 300 ticks/s floor under the same
+stress state (`uv run pytest -m perf`).
+
 ## Replay viewer
 
 `python -m coh.viewer` re-simulates a replay into a compact frame stream
