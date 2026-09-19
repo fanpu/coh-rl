@@ -64,6 +64,10 @@ var sectorPoint = {};         // sector id -> point id
 var sectorCells = null;       // Int16Array sector id per cell
 var layers = {};              // cached offscreen canvases
 var labelBoxes = [];          // text boxes already placed this frame
+var fog = null;               // the current fog context, recomputed each render
+var seenBuildings = {};       // team -> {building id: {b, t}} ever seen by that team
+var seenUpto = {};            // team -> last frame index folded into seenBuildings
+var renderStats = emptyStats();
 
 // ------------------------------------------------------------------ utils --
 
@@ -209,6 +213,10 @@ function prepare() {
   }
   D.map.points.forEach(function (p) { sectorPoint[p.sector] = p.id; });
 
+  seenBuildings = {};
+  seenUpto = {};
+  fog = null;
+
   visIndex = {};
   frames.forEach(function (f, i) {
     var v = f.vis || {};
@@ -270,8 +278,99 @@ function visAt(team, idx) {
 
 function visibleAt(bits, cx, cy) {
   if (!bits) return true;
+  if (cx < 0 || cx >= W || cy < 0 || cy >= H) return false;
   var n = cy * W + cx;
   return (bits[n >> 3] & (128 >> (n & 7))) !== 0;
+}
+
+// ------------------------------------------------------------------- fog --
+
+/* Everything the renderer needs to answer "can the team I am watching see
+ * this?". `fog` is null in omniscient mode, and every helper below then says
+ * yes, so the omniscient path costs nothing. */
+
+function fogContext(idx) {
+  if (fogMode === 0) return null;
+  var team = fogMode - 1;
+  var bits = visAt(team, idx);
+  return bits ? { team: team, bits: bits, idx: idx } : null;
+}
+
+function isVisibleCell(cx, cy) {
+  return fog === null || visibleAt(fog.bits, cx, cy);
+}
+
+function isVisibleWorld(x, y) {
+  if (fog === null) return true;
+  return visibleAt(fog.bits, Math.floor(x / CELL), Math.floor(y / CELL));
+}
+
+/** A building counts as seen while any cell of its footprint is. */
+function isFootprintVisible(b) {
+  if (fog === null) return true;
+  for (var cy = b.cy; cy < b.cy + b.h; cy++) {
+    for (var cx = b.cx; cx < b.cx + b.w; cx++) {
+      if (visibleAt(fog.bits, cx, cy)) return true;
+    }
+  }
+  return false;
+}
+
+/** Neutral entities (`owner === null`) belong to nobody and are never enemies. */
+function isEnemy(owner) {
+  return fog !== null && owner !== null && owner !== undefined && teamOf(owner) !== fog.team;
+}
+
+/* Per-team memory of enemy buildings: once a team has seen one, it keeps
+ * knowing where it was and what it looked like, even after it leaves vision
+ * (or is destroyed). Folded in frame by frame and cached, and rebuilt from
+ * scratch on a backward seek — the same trick `applyTerrainTo` uses. */
+function seenBuildingsFor(team, idx) {
+  var key = String(team);
+  if (seenUpto[key] === undefined || idx < seenUpto[key]) {
+    seenBuildings[key] = {};
+    seenUpto[key] = -1;
+  }
+  var seen = seenBuildings[key];
+  for (var i = seenUpto[key] + 1; i <= idx; i++) {
+    var bits = visAt(team, i);
+    if (!bits) continue;
+    var frame = frames[i];
+    for (var j = 0; j < frame.buildings.length; j++) {
+      var b = frame.buildings[j];
+      if (b.nu || b.o === null || b.o === undefined || teamOf(b.o) === team) continue;
+      if (!footprintSeen(bits, b)) continue;
+      seen[b.id] = { b: b, t: frame.t };
+    }
+  }
+  seenUpto[key] = idx;
+  return seen;
+}
+
+function footprintSeen(bits, b) {
+  for (var cy = b.cy; cy < b.cy + b.h; cy++) {
+    for (var cx = b.cx; cx < b.cx + b.w; cx++) {
+      if (visibleAt(bits, cx, cy)) return true;
+    }
+  }
+  return false;
+}
+
+/** 'live' (draw it as it is), 'ghost' (last known) or 'hidden' (never seen). */
+function buildingFogMode(b, seen) {
+  if (fog === null || b.nu || !isEnemy(b.o)) return 'live';
+  if (isFootprintVisible(b)) return 'live';
+  return seen && seen[b.id] ? 'ghost' : 'hidden';
+}
+
+function squadHidden(s) {
+  if (fog === null || !isEnemy(s.o)) return false;
+  return !isVisibleCell(Math.floor(s.x / CELL), Math.floor(s.y / CELL));
+}
+
+function emptyStats() {
+  return { buildings: 0, ghosts: 0, hiddenBuildings: 0, squads: 0, hiddenSquads: 0,
+           effects: 0, hiddenEffects: 0, badges: 0 };
 }
 
 // ----------------------------------------------------------------- camera --
@@ -626,53 +725,93 @@ function drawPointIcon(type, s, colour) {
 }
 
 function drawBuildings(frame) {
+  var seen = fog ? seenBuildingsFor(fog.team, fog.idx) : null;
+  var drawn = {};
+
   frame.buildings.forEach(function (b) {
-    var o = toScreen(b.cx * CELL, b.cy * CELL);
-    var w = b.w * CELL * cam.scale, h = b.h * CELL * cam.scale;
-    var colour = b.nu ? '#8a8171' : playerColour(b.o);
-    var done = b.prog >= 1;
-
-    ctx.save();
-    ctx.fillStyle = done ? mix(colour, '#12140f', 0.55) : 'rgba(30,33,25,0.75)';
-    ctx.fillRect(o[0], o[1], w, h);
-
-    if (!done) {
-      ctx.save();
-      ctx.beginPath(); ctx.rect(o[0], o[1], w, h); ctx.clip();
-      ctx.strokeStyle = 'rgba(230,220,180,0.35)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (var d = -h; d < w; d += 7) { ctx.moveTo(o[0] + d, o[1] + h); ctx.lineTo(o[0] + d + h, o[1]); }
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = selection && selection.kind === 'building' && selection.id === b.id ? 3 : 1.8;
-    ctx.strokeRect(o[0] + 0.5, o[1] + 0.5, w - 1, h - 1);
-
-    // health / construction bar
-    var frac = done ? b.hp : b.prog;
-    if (frac < 0.999) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(o[0], o[1] - 6, w, 4);
-      ctx.fillStyle = done ? barColour(b.hp) : '#d8b45a';
-      ctx.fillRect(o[0], o[1] - 6, w * clamp(frac, 0, 1), 4);
-    }
-
-    // production queue progress (when inspected)
-    if (selection && selection.kind === 'building' && selection.id === b.id && b.q && b.q.length) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(o[0], o[1] + h + 2, w, 4);
-      ctx.fillStyle = '#9fc4e8';
-      ctx.fillRect(o[0], o[1] + h + 2, w * queueFrac(b.q[0]), 4);
-    }
-
-    if (b.n > 0) badge(o[0] + w - 2, o[1] + 2, String(b.n), colour);
-
-    if (cam.scale > 4.5) label(title(b.def), o[0] + w / 2, o[1] + h + 12);
-    ctx.restore();
+    var mode = buildingFogMode(b, seen);
+    if (mode === 'hidden') { renderStats.hiddenBuildings++; return; }
+    drawn[b.id] = true;
+    if (mode === 'ghost') { drawBuilding(seen[b.id].b, seen[b.id].t); renderStats.ghosts++; }
+    else { drawBuilding(b, null); renderStats.buildings++; }
   });
+
+  // A building the team saw and has since lost sight of — or that has been
+  // destroyed behind its back — is still remembered where it stood.
+  if (seen) {
+    Object.keys(seen).forEach(function (id) {
+      if (drawn[id]) return;
+      drawBuilding(seen[id].b, seen[id].t);
+      renderStats.ghosts++;
+    });
+  }
+}
+
+/** `seenTick` null = live; otherwise this is a last-known ghost from that tick. */
+function drawBuilding(b, seenTick) {
+  var ghost = seenTick !== null && seenTick !== undefined;
+  var o = toScreen(b.cx * CELL, b.cy * CELL);
+  var w = b.w * CELL * cam.scale, h = b.h * CELL * cam.scale;
+  var colour = ghost ? '#7d7a70' : (b.nu ? '#8a8171' : playerColour(b.o));
+  var done = b.prog >= 1;
+
+  ctx.save();
+  ctx.fillStyle = ghost ? 'rgba(20,22,17,0.55)'
+    : (done ? mix(colour, '#12140f', 0.55) : 'rgba(30,33,25,0.75)');
+  ctx.fillRect(o[0], o[1], w, h);
+
+  if (!done && !ghost) {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(o[0], o[1], w, h); ctx.clip();
+    ctx.strokeStyle = 'rgba(230,220,180,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var d = -h; d < w; d += 7) { ctx.moveTo(o[0] + d, o[1] + h); ctx.lineTo(o[0] + d + h, o[1]); }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = selection && selection.kind === 'building' && selection.id === b.id ? 3 : 1.8;
+  if (ghost) ctx.setLineDash([5, 4]);
+  ctx.strokeRect(o[0] + 0.5, o[1] + 0.5, w - 1, h - 1);
+  ctx.setLineDash([]);
+
+  if (ghost) {
+    // No live bars, badge or queue: this is memory, not observation.
+    if (cam.scale > 4.5) {
+      label(title(b.def) + ' (' + mmss(seenTick / TPS) + ')', o[0] + w / 2, o[1] + h + 12,
+            'rgba(190,185,172,0.85)');
+    }
+    ctx.restore();
+    return;
+  }
+
+  // health / construction bar
+  var frac = done ? b.hp : b.prog;
+  if (frac < 0.999) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(o[0], o[1] - 6, w, 4);
+    ctx.fillStyle = done ? barColour(b.hp) : '#d8b45a';
+    ctx.fillRect(o[0], o[1] - 6, w * clamp(frac, 0, 1), 4);
+  }
+
+  // production queue progress (when inspected)
+  if (selection && selection.kind === 'building' && selection.id === b.id && b.q && b.q.length) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(o[0], o[1] + h + 2, w, 4);
+    ctx.fillStyle = '#9fc4e8';
+    ctx.fillRect(o[0], o[1] + h + 2, w * queueFrac(b.q[0]), 4);
+  }
+
+  // A neutral building's garrison is only knowable while you can see it.
+  if (b.n > 0 && (!b.nu || isFootprintVisible(b))) {
+    badge(o[0] + w - 2, o[1] + 2, String(b.n), colour);
+    renderStats.badges++;
+  }
+
+  if (cam.scale > 4.5) label(title(b.def), o[0] + w / 2, o[1] + h + 12);
+  ctx.restore();
 }
 
 /** Fraction of a queued train/research item that is already done. */
@@ -740,29 +879,38 @@ function placeLabel(text, x, y, r, colour, font, avoid) {
   return false;
 }
 
-/** Screen-space footprint rectangles, used to keep labels off buildings. */
+/** Screen-space footprint rectangles, used to keep labels off buildings.
+ *  Only buildings that are actually drawn count: a label must not dodge
+ *  something the viewer is hiding (and a hidden building must not be
+ *  detectable by the way it nudges labels around). */
 function buildingRects(frame) {
-  return frame.buildings.map(function (b) {
+  var seen = fog ? seenBuildingsFor(fog.team, fog.idx) : null;
+  var rects = [];
+  function add(b) {
     var o = toScreen(b.cx * CELL, b.cy * CELL);
-    return [o[0] - 2, o[1] - 8, o[0] + b.w * CELL * cam.scale + 2, o[1] + b.h * CELL * cam.scale + 14];
+    rects.push([o[0] - 2, o[1] - 8, o[0] + b.w * CELL * cam.scale + 2, o[1] + b.h * CELL * cam.scale + 14]);
+  }
+  var drawn = {};
+  frame.buildings.forEach(function (b) {
+    var mode = buildingFogMode(b, seen);
+    if (mode === 'hidden') return;
+    drawn[b.id] = true;
+    add(mode === 'ghost' ? seen[b.id].b : b);
   });
+  if (seen) Object.keys(seen).forEach(function (id) { if (!drawn[id]) add(seen[id].b); });
+  return rects;
 }
 
 function barColour(frac) {
   return frac > 0.6 ? '#7fbf6a' : (frac > 0.3 ? '#d8b45a' : '#e2705f');
 }
 
-function drawSquads(squads, bits) {
+function drawSquads(squads) {
   var offsets = (D.meta && D.meta.formation_offsets) || [[0, 0]];
   squads.forEach(function (s) {
-    if (bits) {
-      var vteam = fogMode - 1;
-      if (teamOf(s.o) !== vteam) {
-        var cx = clamp(Math.floor(s.x / CELL), 0, W - 1), cy = clamp(Math.floor(s.y / CELL), 0, H - 1);
-        if (!visibleAt(bits, cx, cy)) return;
-      }
-    }
+    if (squadHidden(s)) { renderStats.hiddenSquads++; return; }
     if (s.g !== undefined) return;   // garrisoned: shown as a badge on the building
+    renderStats.squads++;
 
     var meta = (D.meta.squad_defs && D.meta.squad_defs[s.def]) || {};
     var p = toScreen(s.x, s.y);
@@ -1020,11 +1168,31 @@ function drawEffects(effects, frame) {
   effects.forEach(function (e) {
     try {
       var spec = EFFECTS[e.k];
+      if (spec !== undefined && !spec.draw) return;    // null = shown elsewhere
+      if (!effectVisible(e, frame)) { renderStats.hiddenEffects++; return; }
       if (spec === undefined) genericMark(e, frame);   // a kind this page predates
-      else if (spec.draw) spec.draw(e, frame);         // null = shown elsewhere
+      else spec.draw(e, frame);
+      renderStats.effects++;
     } catch (err) { /* an effect must never break the frame */ }
   });
   ctx.restore();
+}
+
+/** Would the team being watched have seen this happen?
+ *
+ *  A shot counts if either end is visible — you see your own squad fire into
+ *  the dark, and you see rounds arriving from an unseen shooter. Anything else
+ *  needs its own position in vision. An event with no position at all is
+ *  dropped under fog: there is nowhere to check, so it cannot be vouched for. */
+function effectVisible(e, frame) {
+  if (fog === null) return true;
+  var d = e.d || {};
+  if (e.k === 'shot') {
+    return (Array.isArray(d.src_pos) && isVisibleWorld(d.src_pos[0], d.src_pos[1])) ||
+           (Array.isArray(d.dst_pos) && isVisibleWorld(d.dst_pos[0], d.dst_pos[1]));
+  }
+  var w = eventPos(e, frame);
+  return w !== null && isVisibleWorld(w[0], w[1]);
 }
 
 function drawTracer(e) {
@@ -1111,6 +1279,7 @@ function render() {
   var span = b.t - a.t;
   var u = span > 0 ? clamp((tick - a.t) / span, 0, 1) : 0;
   applyTerrainTo(idx);
+  fog = fogContext(idx);
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -1123,14 +1292,15 @@ function render() {
   if (showCover) blitCells(coverLayer(), 0.9, true);
 
   labelBoxes = [];
+  renderStats = emptyStats();
   var effects = activeEffects(tick);
+  // Sector ownership and capture progress are map knowledge in CoH, so points
+  // (and their pulses) stay omniscient; units, buildings and effects do not.
   drawPoints(a, effects);
   drawBuildings(a);
-
-  var bits = fogMode > 0 ? visAt(fogMode - 1, idx) : null;
-  drawSquads(interpolated(a, b, u), bits);
+  drawSquads(interpolated(a, b, u));
   drawEffects(effects, a);
-  if (bits) blitCells(fogLayer(bits), 1, true);
+  if (fog) blitCells(fogLayer(fog.bits), 1, true);
 
   updateHud(a);
   drawTimeline();
@@ -1221,8 +1391,28 @@ function updatePanel(frame) {
   var el = document.getElementById('panel');
   var body = document.getElementById('panel-body');
   var entity = null;
-  if (selection.kind === 'squad') entity = frame.squads.filter(function (s) { return s.id === selection.id; })[0];
-  else entity = frame.buildings.filter(function (b) { return b.id === selection.id; })[0];
+  var seenTick = null;
+  if (selection.kind === 'squad') {
+    entity = frame.squads.filter(function (s) { return s.id === selection.id; })[0];
+    // An enemy squad out of vision is not reported on at all: the inspector
+    // must never leak live state the watched team cannot observe.
+    if (entity && squadHidden(entity)) {
+      showHiddenPanel(el, 'Enemy squad', 'out of vision');
+      return;
+    }
+  } else {
+    entity = frame.buildings.filter(function (b) { return b.id === selection.id; })[0];
+    var seen = fog ? seenBuildingsFor(fog.team, fog.idx) : null;
+    var mode = entity ? buildingFogMode(entity, seen) : (seen && seen[selection.id] ? 'ghost' : 'live');
+    if (mode === 'hidden') {
+      showHiddenPanel(el, 'Enemy building', 'never seen');
+      return;
+    }
+    if (mode === 'ghost' || (!entity && seen && seen[selection.id])) {
+      entity = seen[selection.id].b;
+      seenTick = seen[selection.id].t;
+    }
+  }
 
   if (!entity) {
     el.hidden = false;
@@ -1232,12 +1422,27 @@ function updatePanel(frame) {
   }
 
   el.hidden = false;
+  var swatch = seenTick !== null ? '#7d7a70' : (entity.nu ? NEUTRAL : playerColour(entity.o));
   document.getElementById('panel-title').innerHTML =
-    '<span style="color:' + (entity.nu ? NEUTRAL : playerColour(entity.o)) + '">■</span> ' +
-    title(entity.def) + ' <span style="color:var(--dim);font-weight:400">#' + entity.id + '</span>';
+    '<span style="color:' + swatch + '">■</span> ' + title(entity.def) +
+    ' <span style="color:var(--dim);font-weight:400">#' + entity.id +
+    (seenTick !== null ? ' · last known' : '') + '</span>';
 
   var rows = [];
   function kv(k, v) { rows.push('<dt>' + k + '</dt><dd>' + v + '</dd>'); }
+
+  if (seenTick !== null) {
+    // Last known: position and identity only, never live HP, progress or queue.
+    kv('owner', entity.o === null || entity.o === undefined ? 'neutral'
+       : 'player ' + entity.o + ' (team ' + teamOf(entity.o) + ')');
+    kv('cell', entity.cx + ', ' + entity.cy);
+    kv('footprint', entity.w + ' × ' + entity.h + ' cells');
+    kv('last seen', mmss(seenTick / TPS));
+    body.innerHTML = '<dl class="kv">' + rows.join('') + '</dl>' +
+      '<p style="color:var(--dim);margin:9px 0 0">Out of vision — showing the last ' +
+      'thing team ' + fog.team + ' saw here.</p>';
+    return;
+  }
 
   if (selection.kind === 'squad') {
     var meta = (D.meta.squad_defs && D.meta.squad_defs[entity.def]) || {};
@@ -1281,6 +1486,14 @@ function updatePanel(frame) {
     body.innerHTML = '<dl class="kv">' + rows.join('') + '</dl>' +
       '<div class="sect">Production queue</div>' + queue;
   }
+}
+
+/** The panel for something the watched team cannot report on. */
+function showHiddenPanel(el, what, why) {
+  el.hidden = false;
+  document.getElementById('panel-title').textContent = what;
+  document.getElementById('panel-body').innerHTML =
+    '<p style="color:var(--dim)">Hidden from team ' + (fog ? fog.team : '?') + ' (' + why + ').</p>';
 }
 
 function buildLegend() {
@@ -1328,19 +1541,34 @@ function cycleFog() {
   requestRender();
 }
 
+/** Hit test in world space. Anything the watched team cannot see is not
+ *  clickable either — otherwise the fog would only be skin deep. */
 function pick(px, py) {
   var frame = frames[frameIndexFor(tick)];
+  var seen = fog ? seenBuildingsFor(fog.team, fog.idx) : null;
   var w = toWorld(px, py);
   var best = null, bestD = Infinity;
+
   frame.squads.forEach(function (s) {
+    if (squadHidden(s) || s.g !== undefined) return;
     var d = Math.hypot(s.x - w[0], s.y - w[1]);
     if (d < Math.max(3, 16 / cam.scale) && d < bestD) { bestD = d; best = { kind: 'squad', id: s.id }; }
   });
   if (best) return best;
+
+  function hits(b) {
+    return w[0] >= b.cx * CELL && w[0] <= (b.cx + b.w) * CELL &&
+           w[1] >= b.cy * CELL && w[1] <= (b.cy + b.h) * CELL;
+  }
   for (var i = frame.buildings.length - 1; i >= 0; i--) {
     var b = frame.buildings[i];
-    if (w[0] >= b.cx * CELL && w[0] <= (b.cx + b.w) * CELL && w[1] >= b.cy * CELL && w[1] <= (b.cy + b.h) * CELL) {
-      return { kind: 'building', id: b.id };
+    if (buildingFogMode(b, seen) === 'hidden') continue;
+    if (hits(b)) return { kind: 'building', id: b.id };
+  }
+  if (seen) {   // remembered ghosts stay clickable, live or not
+    var ids = Object.keys(seen);
+    for (var j = ids.length - 1; j >= 0; j--) {
+      if (hits(seen[ids[j]].b)) return { kind: 'building', id: seen[ids[j]].b.id };
     }
   }
   return null;
@@ -1496,6 +1724,38 @@ window.__viewer = {
   },
   /** Draw one frame synchronously (headless capture must not wait on rAF). */
   redraw: function () { render(); },
+  /** What the last render actually drew — the fog assertions read this. */
+  stats: function () { return renderStats; },
+  /** Screen pixel for a world position, so a test can sample a known spot. */
+  screenOf: function (x, y) { return toScreen(x, y); },
+  /** Checksum of the pixels in a box around a world position. */
+  sampleWorld: function (x, y, radiusPx) {
+    var p = toScreen(x, y);
+    var cv = document.getElementById('cv');
+    var g = cv.getContext('2d');
+    var x0 = Math.max(0, Math.round((p[0] - radiusPx) * dpr));
+    var y0 = Math.max(0, Math.round((p[1] - radiusPx) * dpr));
+    var size = Math.max(1, Math.round(radiusPx * 2 * dpr));
+    var w = Math.min(size, cv.width - x0), h = Math.min(size, cv.height - y0);
+    if (w <= 0 || h <= 0) return 0;
+    var data = g.getImageData(x0, y0, w, h).data;
+    var sum = 2166136261;
+    for (var i = 0; i < data.length; i += 4) {
+      sum ^= data[i] + data[i + 1] * 3 + data[i + 2] * 7;
+      sum = (sum * 16777619) | 0;
+    }
+    return sum;
+  },
+  /** Which of 'live' / 'ghost' / 'hidden' a building is under the current fog. */
+  buildingFog: function (id) {
+    var frame = frames[frameIndexFor(tick)];
+    var seen = fog ? seenBuildingsFor(fog.team, fog.idx) : null;
+    var b = frame.buildings.filter(function (x) { return x.id === id; })[0];
+    if (!b) return seen && seen[id] ? 'ghost' : 'gone';
+    return buildingFogMode(b, seen);
+  },
+  /** What `pick()` would select at a screen point (null when nothing is clickable). */
+  pickAt: function (px, py) { return pick(px, py); },
   setPlaying: setPlaying,
   cycleFog: cycleFog
 };

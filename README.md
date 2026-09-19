@@ -79,8 +79,13 @@ its production queue, and blast / wreck / ejection effects:
 ![Every unit presentation and effect](docs/img/viewer-units.png)
 
 Press `F` to cycle the fog of war between omniscient, team 0's view and team
-1's view — enemies standing in cells that team cannot see are hidden and unseen
-ground is dimmed:
+1's view. The frames are omniscient; the filtering is the client's job, and it
+is thorough — in a team view, unseen ground is dimmed, enemy squads outside
+that team's vision are hidden (and unclickable), enemy buildings it has seen
+before become greyed "last known" outlines whose inspector reports only when
+they were last seen, enemy buildings it has never seen are not drawn at all,
+and effects it could not have witnessed are dropped. Sector ownership, capture
+progress and the timeline event marks stay omniscient.
 
 ![The same moment through team 0's fog of war](docs/img/viewer-fog.png)
 
