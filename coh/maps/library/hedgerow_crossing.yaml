@@ -1,0 +1,305 @@
+name: hedgerow_crossing
+cell_m: 2.0
+terrain:
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+- '...................................H...........rr...............................................'
+- '...................................H...........rr...............................................'
+- '...................................H...........rr............................H..................'
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+- '...................................H...........rr......................TTT...H..................'
+- '...................................H...........rr......................TTT...H..................'
+- '...................................H...........rr.....................wTTTwwww..................'
+- '...................................H...........rr............................H..................'
+- '...............................................rr...............................................'
+- '.........................f.....................rr...............................................'
+- '...................................H...........rr............................H..................'
+- '...................................H...........rr......TTT...................H..................'
+- '...................................H...........rr......TTT...................H..................'
+- '...................................H...........rr......TTT...................H..................'
+- '...............................................rr.........H.....................................'
+- '...............................................rr..........HHH..................................'
+- '..............................f.f.fH...HH......rr..............f.f.f.........H.......TTT..H.....'
+- '...................................H..H........rr...............HHH..........H.......TTT........'
+- '..................................HH...........rr..................H.........H.......TTT........'
+- '................................HH.H...........rr.....................HH.....H.......HH.........'
+- '........................w..c.H.................rr.......................HH..........H...........'
+- '........................w.ccH..................rr...........................H...................'
+- '........................w..........H...........rr.....................c......HH..H..............'
+- '........................w..........H...........rr....................cc......H.HH...............'
+- '.....~..............H...w..........H...........rr............................HH...HH............'
+- '.....~..........HH......w..........H...........rr............................H......HH..........'
+- '.....~........HH........w.....................ccr.....................cc...H....................'
+- '.....~..................w.....................crr.....................c..HH.....................'
+- '.....~.............................H...........rr.cc....................H....H..................'
+- '.....~.............................H...........rr.c..........................H..................'
+- '.....~.............................H...........rr....................H.......H..................'
+- '...................................H...........rr..................HH........H..................'
+- '...............................................rr.................H.............................'
+- '...............................................rr...............................................'
+- '...................................H...........rr..............H.....................TTT........'
+- '...............................................rr............HH......................TTT........'
+- '...............................................rr...........H........................TTT........'
+- '...............................................rr..................c............................'
+- '...............................................rr.................cc............................'
+- '....................f..........................rr...............................................'
+- '...............................................rr................c..............................'
+- '....................f..........................rr...............cc..............................'
+- '...............................................rr...............................................'
+- rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+- rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+- '...............................................rr...............................................'
+- '..............................cc...............rr..........................f....................'
+- '..............................c................rr...............................................'
+- '...............................................rr..........................f....................'
+- '............................cc.................rr...............................................'
+- '............................c..................rr...............................................'
+- '........TTT........................H...........rr...............................................'
+- '........TTT......................HH............rr...............................................'
+- '........TTT.....................H..............rr...........H...................................'
+- '...............................................rr...............................................'
+- '.............................H.................rr...............................................'
+- '..................H........HH..................rr...........H...................................'
+- '..................H.......H....................rr...........H.............................~.....'
+- '..................H..........................c.rr...........H.............................~.....'
+- '..................H....H....................cc.rr...........H.............................~.....'
+- '.....................HH..c.....................rrc.....................w..................~.....'
+- '....................H...cc.....................rcc.....................w........HH........~.....'
+- '..........HH......H............................rr...........H..........w......HH..........~.....'
+- '............HH...HH............................rr...........H..........w...H..............~.....'
+- '...............HH.H......cc....................rr...........H..........w........................'
+- '..............H..HH......c.....................rr...........H..........w........................'
+- '...................H...........................rr..................Hcc.w........................'
+- '...........H..........HH.......................rr.................H.c..w........................'
+- '.........HH.......H.....HH.....................rr...........H.HH................................'
+- '........TTT.......H.........H..................rr...........HH..................................'
+- '........TTT.......H..........HHH...............rr........H..H...................................'
+- '.....H..TTT.......H.........f.f.f..............rr......HH...Hf.f.f..............................'
+- '..................................HHH..........rr...............................................'
+- '.....................................H.........rr...............................................'
+- '..................H...................TTT......rr...........H...................................'
+- '..................H...................TTT......rr...........H...................................'
+- '..................H...................TTT......rr...........H...................................'
+- '..................H............................rr...........H...................................'
+- '...............................................rr.....................f.........................'
+- '...............................................rr...............................................'
+- '..................H............................rr...........H...................................'
+- '..................wwwwTTTw.....................rr...........H...................................'
+- '..................H...TTT......................rr...........H...................................'
+- '..................H...TTT......................rr...........H...................................'
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+- '..................H............................rr...........H...................................'
+- '...............................................rr...........H...................................'
+- '...............................................rr...........H...................................'
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+- '...............................................rr...............................................'
+sectors:
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- AAAAAAAAAAAAAAAAAAAAAAAABBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCDDDDDDDDDDDDDDDDDDDDEEEEEEEEEEEEEEEEEEEE
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+- IIIIIIIIIIIIIIIIIIIIJJJJJJJJJJJJJJJJJJJJKKKKKKKKKKKKKKKKLLLLLLLLLLLLLLLLMMMMMMMMMMMMMMMMMMMMMMMM
+points:
+- id: hq_nw
+  name: NW HQ
+  type: hq
+  cell:
+  - 11
+  - 17
+- id: strategic_nw
+  name: NW Strongpoint
+  type: strategic
+  cell:
+  - 31
+  - 17
+- id: victory_north
+  name: North Crossing
+  type: victory
+  cell:
+  - 43
+  - 17
+- id: fuel_low_nw
+  name: NW Fuel Cache
+  type: fuel_low
+  cell:
+  - 65
+  - 17
+- id: munitions_med_nw
+  name: NW Munitions Dump
+  type: munitions_med
+  cell:
+  - 85
+  - 17
+- id: fuel_high
+  name: Central Fuel Depot
+  type: fuel_high
+  cell:
+  - 15
+  - 43
+- id: victory_mid
+  name: Farm Crossroads
+  type: victory
+  cell:
+  - 43
+  - 43
+- id: munitions_high
+  name: Central Munitions Works
+  type: munitions_high
+  cell:
+  - 79
+  - 43
+- id: munitions_med_se
+  name: SE Munitions Dump
+  type: munitions_med
+  cell:
+  - 9
+  - 77
+- id: fuel_low_se
+  name: SE Fuel Cache
+  type: fuel_low
+  cell:
+  - 29
+  - 77
+- id: victory_south
+  name: South Crossing
+  type: victory
+  cell:
+  - 43
+  - 77
+- id: strategic_se
+  name: SE Strongpoint
+  type: strategic
+  cell:
+  - 63
+  - 77
+- id: hq_se
+  name: SE HQ
+  type: hq
+  cell:
+  - 83
+  - 77
+neutral_buildings:
+- def: barn
+  cell:
+  - 34
+  - 38
+- def: barn
+  cell:
+  - 57
+  - 54
+- def: house_small
+  cell:
+  - 53
+  - 39
+- def: house_small
+  cell:
+  - 40
+  - 54
+starts:
+- slot: 0
+  team: 0
+  hq_cell:
+  - 11
+  - 17
+  sector: A
+- slot: 1
+  team: 1
+  hq_cell:
+  - 83
+  - 77
+  sector: M
