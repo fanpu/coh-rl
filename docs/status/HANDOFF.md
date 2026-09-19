@@ -40,32 +40,24 @@ whole-branch review (3 reviewers), its fix waves, and a scoped re-review.
 | 2D tactical-map viewer with correct team fog (buildings ghosts, effects filtered) | done |
 | Bench (`scripts/bench_sim.py`): ~1,085 ticks/s stress (60 squads), ~7,000 ticks/s bot matches, single core | done |
 | Scenario tests (fixture data), ladder sanity (T1 > T0 10/10), seat-fairness test, golden state hashes | done |
-| **3D viewer** (three.js vendored, ES modules, static assets inside the package) | merged; **polish round in flight** (see below) |
+| 3D viewer (three.js vendored, ES modules, static assets inside the package; `V` toggles 3D / 2D tactical map; same fog rules in both) | done |
 | **Task 3 — real CoH1 stat tables** | **NOT on main** (see below) |
 
-Test suite on main before the 3D merge: **587 passed** (~100 s, includes real-Chrome
-browser tests). Everything runs on the fixture tables in `tests/data/fixtures` —
+Everything runs on the fixture tables in `tests/data/fixtures` —
 pass `--data-dir tests/data/fixtures` to scripts until Task 3 lands.
 
-### Known-red on main right now
+### Test status
 
-`tests/viewer/test_effect_coverage.py::test_every_sim_event_kind_is_handled_by_the_viewer`
-fails: the 3D branch was developed while the sim fix wave added a new event kind
-(`unit_blocked`); the new viewer effects module lacks an entry. The 3D agent's polish
-round fixes this. If that work was lost, the fix is one entry in the shared effects
-table under `coh/viewer/static/`.
+`uv run pytest -q` → **602 passed** (~2 min, includes real-Chrome 2D + WebGL 3D browser
+tests under SwiftShader); `git status` is clean after a run (doc screenshots are only
+refreshed with `COH_REFRESH_DOCS_IMG=1`). Nothing is known-red.
 
 ## In flight when this was written
 
-**3D viewer polish round** — agent worktree branch `worktree-agent-a45291340f7b522fd`
-(path `.claude/worktrees/agent-a45291340f7b522fd`; ephemeral — may not exist in a new
-session). Asked for: `unit_blocked` effect entry; screenshot tests must not rewrite
-`docs/img/*` unless `COH_REFRESH_DOCS_IMG=1`; larger/brighter infantry + team-coloured
-ground rings under every squad; remove dark cell-aligned blotches on roads; better
-default camera; more visible tracers; regenerate the three 3D screenshots.
-To resume: check whether that branch has commits after `0e41f3d`; merge into main, run
-the full suite (`uv run pytest -q`), confirm `git status` is clean afterwards, look at
-`docs/img/viewer-3d*.png`, push.
+Nothing. The 3D viewer and its polish round (larger infantry with team rings, smooth
+ground texture, HQ→centre opening camera, `unit_blocked` badge, brighter tracers) are
+merged and pushed. Unverified: real-GPU frame rate (only software GL was available;
+~36 draw calls for a real match, ~75 for the showcase).
 
 ## Open decision for the user: Task 3 (real CoH1 stats)
 
