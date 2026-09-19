@@ -23,7 +23,7 @@ import * as models from './models.js';
 import { materials } from './scene.js';
 
 let root = null;          // everything that renders
-export const pickRoot = new THREE.Group();   // proxy volumes, never rendered
+const pickRoot = new THREE.Group();   // proxy volumes, never rendered
 
 const soldierPools = new Map();   // colour -> InstancedMesh
 let props = null;                 // per-entity baked meshes, keyed below

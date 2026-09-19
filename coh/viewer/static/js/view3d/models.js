@@ -409,5 +409,6 @@ const DEFAULTS = {
 export function buildVehicle(ctx) { return factoryFor('vehicle', ctx)(ctx); }
 export function buildPoint(ctx) { return factoryFor('point', ctx)(ctx); }
 
-export { warpaint, KHAKI, OLIVE, STEEL, RUST, TIMBER, PLASTER, SLATE, CHARCOAL };
+/* Re-exported for skin authors, who build their parts with the same
+ * primitives the default look does. */
 export { box, cyl, bake, Parts };

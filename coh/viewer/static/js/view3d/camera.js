@@ -91,7 +91,7 @@ export function apply() {
 // ------------------------------------------------------------------ input --
 
 /** The ground point (world x, sim y) under a screen position. */
-export function groundAt(px, py, width, height) {
+function groundAt(px, py, width, height) {
   const ndc = new THREE.Vector2((px / width) * 2 - 1, -(py / height) * 2 + 1);
   const ray = new THREE.Raycaster();
   ray.setFromCamera(ndc, camera);
@@ -184,5 +184,3 @@ export function trackFollowed(squads, dt) {
   S.cam3.follow = null;   // it died or left the frame
   return false;
 }
-
-export { MIN_DIST, MAX_DIST };

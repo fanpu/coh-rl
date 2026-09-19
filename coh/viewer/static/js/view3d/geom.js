@@ -119,7 +119,7 @@ export class Parts {
 
 const _colourCache = new Map();
 
-export function toColour(c) {
+function toColour(c) {
   if (c && c.isColor) return c;
   let out = _colourCache.get(c);
   if (!out) { out = new THREE.Color().setStyle(String(c)); _colourCache.set(c, out); }

@@ -100,7 +100,7 @@ export function prepare(payload) {
 
 // -------------------------------------------------------------- team/player --
 
-export function playerOf(id) { return (R.D && R.D.players && R.D.players[id]) || null; }
+function playerOf(id) { return (R.D && R.D.players && R.D.players[id]) || null; }
 
 export function teamOf(playerId) {
   const p = playerOf(playerId);
@@ -185,7 +185,7 @@ export function setFogFrame(idx) {
   return fog;
 }
 
-export function isVisibleCell(cx, cy) {
+function isVisibleCell(cx, cy) {
   return fog === null || visibleAt(fog.bits, cx, cy);
 }
 
@@ -210,7 +210,7 @@ function footprintSeen(bits, b) {
 }
 
 /** Neutral entities (`owner === null`) belong to nobody and are never enemies. */
-export function isEnemy(owner) {
+function isEnemy(owner) {
   return fog !== null && owner !== null && owner !== undefined && teamOf(owner) !== fog.team;
 }
 
@@ -218,7 +218,7 @@ export function isEnemy(owner) {
  * knowing where it was and what it looked like, even after it leaves vision
  * (or is destroyed). Folded in frame by frame and cached, and rebuilt from
  * scratch on a backward seek — the same trick `applyTerrainTo` uses. */
-export function seenBuildingsFor(team, idx) {
+function seenBuildingsFor(team, idx) {
   const key = String(team);
   if (seenUpto[key] === undefined || idx < seenUpto[key]) {
     seenBuildings[key] = {};
@@ -255,11 +255,6 @@ export function buildingFogMode(b, seen) {
 export function squadHidden(s) {
   if (fog === null || !isEnemy(s.o)) return false;
   return !isVisibleCell(Math.floor(s.x / R.CELL), Math.floor(s.y / R.CELL));
-}
-
-/** A garrisoned squad is drawn as a badge on its building, not as a unit. */
-export function squadOnMap(s) {
-  return s.g === undefined && !squadHidden(s);
 }
 
 /** The buildings a renderer should actually draw, each tagged live or ghost.
@@ -398,7 +393,7 @@ export function eventPos(e, frame) {
  *  the dark, and you see rounds arriving from an unseen shooter. Anything else
  *  needs its own position in vision. An event with no position at all is
  *  dropped under fog: there is nowhere to check, so it cannot be vouched for. */
-export function effectVisible(e, frame) {
+function effectVisible(e, frame) {
   if (fog === null) return true;
   const d = e.d || {};
   if (e.k === 'shot') {

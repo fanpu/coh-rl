@@ -15,7 +15,7 @@ import {
 
 const $ = function (id) { return document.getElementById(id); };
 
-export function updateHud(frame) {
+function updateHud(frame) {
   (R.D.players || []).forEach(function (p, i) {
     const el = $('p' + i);
     if (!el) return;
@@ -58,7 +58,7 @@ function updateBanner() {
     (over.d.reason ? '<span>' + title(over.d.reason) + '</span>' : '');
 }
 
-export function drawTimeline() {
+function drawTimeline() {
   const tl = $('timeline');
   const g = tl.getContext('2d');
   const w = tl.clientWidth, h = tl.clientHeight;
@@ -90,7 +90,7 @@ export function drawTimeline() {
 
 export function closePanel() { S.selection = null; $('panel').hidden = true; }
 
-export function updatePanel(frame) {
+function updatePanel(frame) {
   const el = $('panel');
   const body = $('panel-body');
   let entity = null;
@@ -242,5 +242,3 @@ export function updateChrome(frame) {
   drawTimeline();
   if (S.selection) updatePanel(frame);
 }
-
-export { currentFrame };

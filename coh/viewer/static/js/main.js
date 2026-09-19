@@ -78,7 +78,7 @@ export function install3d(module) {
   view3d = module;
 }
 
-export function toggleView() {
+function toggleView() {
   if (!view3d || !S.webgl) {
     hud.notice('3D needs WebGL, which this browser did not provide — showing the tactical map.');
     return;
@@ -336,8 +336,6 @@ export function select(hit) {
   if (hit) S.selection = hit; else hud.closePanel();
   requestRender();
 }
-
-export { resetCamera, setPlaying, requestRender as redrawLater };
 
 // ------------------------------------------------------------- test hook --
 

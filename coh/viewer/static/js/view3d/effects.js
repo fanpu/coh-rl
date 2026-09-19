@@ -28,7 +28,7 @@ let group = null;
 let tracers = null, fire = null, smoke = null, dirt = null;
 let rings = [];
 let decalCanvas = null, decalCtx = null, decalMesh = null;
-let wrecks = null, wreckSeen = {}, wreckUpto = -1;
+let wrecks = null, wreckSeen = {};
 let decalUpto = -1;
 
 const _m = new THREE.Matrix4();
@@ -102,7 +102,6 @@ function instanced(geometry, count, material) {
 export function reset() {
   decalUpto = -1;
   wreckSeen = {};
-  wreckUpto = -1;
   wreckSeen = {};
   if (decalCtx) decalCtx.clearRect(0, 0, decalCanvas.width, decalCanvas.height);
   if (wrecks) {
@@ -313,7 +312,6 @@ function syncPersistent(effects, frame, tick) {
   if (tick < decalUpto || team !== scarTeam) { reset(); scarTeam = team; }
   const from = decalUpto;
   decalUpto = tick;
-  wreckUpto = tick;
   if (from >= tick) return;
 
   for (let i = 0; i < R.allEvents.length; i++) {
