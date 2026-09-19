@@ -1,21 +1,41 @@
 # coh-rl
 
-A Company of Heroes 1 mechanics clone used as a reinforcement-learning environment: a deterministic tick-based sim (`coh/sim`), a Gym-style wrapper (`coh/env`), and a browser-based replay viewer, driven entirely by data tables scraped/estimated into `coh/data`. See `docs/superpowers/specs/2026-09-19-coh-rl-env-design.md` for the design and `docs/superpowers/plans/2026-09-19-m1-playable-sim.md` for the implementation plan.
+A Company of Heroes 1 mechanics clone used as a reinforcement-learning environment: a deterministic tick-based sim (`coh/sim`), a PettingZoo-style parallel multi-agent env (`coh/env`), and a browser-based replay viewer, driven entirely by data tables scraped/estimated into `coh/data`. See `docs/superpowers/specs/2026-09-19-coh-rl-env-design.md` for the design and `docs/superpowers/plans/2026-09-19-m1-playable-sim.md` for the implementation plan.
 
 Setup and usage:
 
 ```
 uv sync
 uv run pytest
-uv run python scripts/play_match.py
-uv run python -m coh.viewer <replay>
+uv run python scripts/play_match.py --data-dir tests/data/fixtures --out match.replay.json
+uv run python -m coh.viewer match.replay.json --data-dir tests/data/fixtures
 ```
+
+`--data-dir` is needed until the packaged tables under `coh/data/tables/` are
+populated: the hand-written fixtures under `tests/data/fixtures/` are the
+playable set today.
+
+`CohEnv.step` takes one order list per player and returns one observation,
+reward, `done` and info per player. Rewards are terminal and paid once — the
+step that ends the match pays +1 / −1 / 0 and later no-op steps pay 0 — so an
+episode's return is exactly the match result. Within a step, players are
+served one at a time (so a race for the last of a resource has a definite
+winner) and who goes first rotates by step index, so no seat is permanently
+first in line.
 
 ## Performance
 
 `scripts/bench_sim.py` measures simulation throughput and breaks it down per
 tick system. It times each system by wrapping the module's `run` from the
-script, so no timing code lives inside `coh/sim`.
+script, so no timing code lives inside `coh/sim`. Each measurement is a
+discarded warmup run followed by `--repeats` (default 3) measured runs, of
+which the fastest is reported.
+
+Every number below is measured **with those per-system timers installed** —
+a `perf_counter` pair around each system's `run`, `build_observation` and the
+agents' `act`. That costs a few percent, so uninstrumented throughput is
+slightly higher; the numbers are comparable with each other, which is what
+they are for.
 
 ```
 # the number that matters for RL: 30 squads a side, mixed arms, fighting flat out

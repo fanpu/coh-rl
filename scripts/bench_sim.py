@@ -17,6 +17,12 @@ calls, and no timing code ever lands inside `coh/sim`. `build_observation`
 and the agents' `act` are timed the same way, separately, so the sim's own
 cost can be read apart from the harness around it.
 
+Every measured run is preceded by a discarded warmup (`--warmup-seconds`) and
+repeated `--repeats` times, of which the fastest is reported: the first run
+pays for filling the vision-mask and path caches and for importing half of
+numpy, and a loaded machine only ever makes a run slower, so the best of a
+few is the honest estimate of the code's throughput.
+
 `--profile N` additionally runs the whole loop under cProfile and prints the
 top N functions by cumulative time.
 """
@@ -54,6 +60,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None, help="stat tables directory (default: packaged tables)")
     parser.add_argument("--squads", type=int, default=stress.StressConfig().squads_per_side, help="--stress: squads per side")
     parser.add_argument("--decision-interval", type=float, default=2.0, help="match mode: seconds of game time per agent decision")
+    parser.add_argument("--repeats", type=int, default=3, metavar="N", help="measured runs; the fastest is reported")
+    parser.add_argument("--warmup-seconds", type=float, default=10.0, help="game seconds of discarded warmup (0 to skip)")
     parser.add_argument("--profile", type=int, default=0, metavar="N", help="also run under cProfile and print the top N functions")
     return parser.parse_args(argv)
 
@@ -191,13 +199,34 @@ def run_stress(args: argparse.Namespace, data, timers: Timers) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def best_of(mode, args: argparse.Namespace, data, repeats: int, warmup_seconds: float) -> tuple[dict, Timers]:
+    """Warm up once (discarded), then measure `repeats` times and keep the fastest."""
+    if repeats < 1:
+        raise ValueError(f"--repeats must be at least 1, got {repeats}")
+    if warmup_seconds > 0:
+        warmup = argparse.Namespace(**vars(args))
+        warmup.seconds = min(warmup_seconds, args.seconds)
+        mode(warmup, data, Timers())
+
+    runs: list[tuple[dict, Timers]] = []
+    for _ in range(repeats):
+        timers = Timers()
+        with instrumented(timers):
+            result = mode(args, data, timers)
+        result["repeats"] = repeats
+        runs.append((result, timers))
+    return max(runs, key=lambda run: run[0]["ticks"] / run[0]["wall_s"] if run[0]["wall_s"] > 0 else 0.0)
+
+
 def report(result: dict, timers: Timers) -> None:
     ticks, wall_s = result["ticks"], result["wall_s"]
     ticks_per_s = ticks / wall_s if wall_s > 0 else float("inf")
     print(result["label"])
     print(f"  ticks          {ticks} ({ticks * DT:.1f}s of game time)")
     print(f"  wall clock     {wall_s:.2f}s")
-    print(f"  throughput     {ticks_per_s:.0f} ticks/s   ({ticks_per_s * DT:.1f} game-s per wall-s)")
+    repeats = result.get("repeats", 1)
+    best = f" (best of {repeats})" if repeats > 1 else ""
+    print(f"  throughput     {ticks_per_s:.0f} ticks/s{best}   ({ticks_per_s * DT:.1f} game-s per wall-s)")
     print(f"  live squads    {result['squads']} at the end")
     if result["winner"] is not None:
         print(f"  winner         {result['winner']} (the match ended early)")
@@ -220,9 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     data = load_game_data(Path(args.data_dir)) if args.data_dir else load_game_data()
     mode = run_stress if args.stress else run_match
 
-    timers = Timers()
-    with instrumented(timers):
-        result = mode(args, data, timers)
+    result, timers = best_of(mode, args, data, args.repeats, args.warmup_seconds)
     report(result, timers)
 
     if args.profile:

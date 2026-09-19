@@ -201,21 +201,21 @@ sectors:
 # partner's, and both partners carry the SAME type, so each seat has the
 # identical resource mix at identical path distances:
 #
-# Infantry BFS cells from each side's own HQ footprint, in brackets:
+# In brackets: infantry BFS cells from that seat's own starting builder.
 #
-#   A / M   strategic       base sector, owned from the start (manpower + pop)
-#   B / L   fuel_low    [17] the safe fuel cache next to each base
-#   D / J   munitions_med [52] the flank munitions dump
-#   E / I   fuel_high   [63] the corner fuel depot: the map's fuel prize,
+#   A / M   strategic        base sector, owned from the start (manpower + pop)
+#   B / L   fuel_low    [20] the safe fuel cache next to each base
+#   D / J   munitions_med [54] the flank munitions dump
+#   E / I   fuel_high   [64] the corner fuel depot: the map's fuel prize,
 #                            off each side's own flank
-#   F / H   munitions_high [25] each side's half of the contested middle
-#   C / K   victory     [30] north / south crossing
-#   G       victory     [61] the centre crossroads
+#   F / H   munitions_high [26] each side's half of the contested middle
+#   C / K   victory     [32] north / south crossing
+#   G       victory     [63] the centre crossroads
 #
 # A single centre point cannot be its own rotational image on an even grid,
 # so `victory_mid` instead sits on a cell whose infantry BFS distance from
-# both HQ footprints is exactly equal (61 cells); its rotational image,
-# (48, 47), is the other equidistant cell of the crossroads. See
+# both seats' builder spawns is exactly equal (63 cells); its rotational
+# image, (48, 47), is the other equidistant cell of the crossroads. See
 # tests/maps/test_hedgerow_crossing.py, which re-derives all of this.
 points:
 - id: base_nw
@@ -313,10 +313,13 @@ neutral_buildings:
   cell:
   - 40
   - 54
-# `hq_cell` is the top-left corner of the HQ footprint (how the sim anchors
-# it today, see `Sim.spawn_building` -> `GameMap.stamp_footprint`). With the
-# 4x4 HQ of the stat tables the two footprints cover x11-14/y17-20 and
-# x81-84/y75-78, which are exact rotational images of each other.
+# The sim centres the HQ footprint on `hq_cell` (`Sim._hq_footprint_cell`:
+# top-left = hq_cell - footprint // 2). With the 4x4 HQ of the stat tables
+# every footprint side is even, and an even side has no centre cell, so the
+# two seats' footprints are exact rotational images when their `hq_cell`s are
+# images under x -> 96 - x (not 95 - x, which is the convention the point
+# cells above use). (11, 17) and (85, 79) stamp x9-12/y15-18 and
+# x83-86/y77-80, which are exact images under the grid rotation.
 starts:
 - slot: 0
   team: 0
@@ -327,6 +330,6 @@ starts:
 - slot: 1
   team: 1
   hq_cell:
-  - 81
-  - 75
+  - 85
+  - 79
   sector: M

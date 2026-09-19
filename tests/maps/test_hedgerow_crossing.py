@@ -19,7 +19,7 @@ from collections import deque
 import numpy as np
 import pytest
 
-from coh.maps.format import GameMap, load_map
+from coh.maps.format import CELL_M, GameMap, cell_of, load_map
 from coh.sim.sim import PlayerSetup, Sim, neutral_footprints
 from tests.helpers import fixture_data
 
@@ -80,24 +80,40 @@ def hedgerow_map(data):
 
 
 @pytest.fixture(scope="module")
-def hq_footprints(hedgerow_map, data) -> dict[int, list[tuple[int, int]]]:
-    """Each seat's HQ footprint cells, exactly as the sim stamps them."""
-    sim = Sim(
+def opening(hedgerow_map, data) -> Sim:
+    """The opening state of a mirror match: where the sim actually puts things."""
+    return Sim(
         game_map=hedgerow_map,
         players=[PlayerSetup(faction="us", team=0, start_slot=0), PlayerSetup(faction="us", team=1, start_slot=1)],
         data=data,
         seed=0,
     )
+
+
+@pytest.fixture(scope="module")
+def hq_footprints(opening, data) -> dict[int, list[tuple[int, int]]]:
+    """Each seat's HQ footprint cells, exactly as the sim stamps them."""
     out: dict[int, list[tuple[int, int]]] = {}
-    for player_id, player in sorted(sim.state.players.items()):
-        hq = sim.state.buildings[player.hq_id]
+    for player_id, player in sorted(opening.state.players.items()):
+        hq = opening.state.buildings[player.hq_id]
         out[player_id] = _footprint_cells(hq.cell, data.buildings[hq.def_id].footprint)
     return out
 
 
 @pytest.fixture(scope="module")
-def hq_distances(hedgerow_map, hq_footprints) -> dict[int, np.ndarray]:
-    return {pid: _bfs(hedgerow_map.pass_inf, cells) for pid, cells in hq_footprints.items()}
+def builder_cells(opening) -> dict[int, tuple[int, int]]:
+    """Where each seat's starting builder stands -- the real start line."""
+    return {
+        player_id: cell_of(
+            next(s for s in opening.state.squads.values() if s.owner == player_id).pos, CELL_M
+        )
+        for player_id in sorted(opening.state.players)
+    }
+
+
+@pytest.fixture(scope="module")
+def hq_distances(hedgerow_map, builder_cells) -> dict[int, np.ndarray]:
+    return {pid: _bfs(hedgerow_map.pass_inf, [cell]) for pid, cell in builder_cells.items()}
 
 
 def test_loads_and_validates(hedgerow_map):
@@ -174,11 +190,18 @@ def test_both_seats_get_the_same_point_type_mix(hedgerow_map, hq_distances):
 def test_hq_footprints_are_exact_rotational_images(hedgerow_map, hq_footprints):
     """The footprints the *sim* stamps -- not just the `hq_cell` anchors.
 
-    Fails loudly if `Sim.spawn_building`'s footprint anchoring ever changes
-    without `starts[*].hq_cell` being re-derived for the new rule.
+    The sim centres the footprint on `hq_cell` (`Sim._hq_footprint_cell`), so
+    `starts[*].hq_cell` is derived for that rule; this fails loudly if the
+    anchoring ever changes without the map being re-derived for it.
     """
     m = hedgerow_map
     assert {_rotate(m, cell) for cell in hq_footprints[0]} == set(hq_footprints[1])
+
+
+def test_starting_builders_are_exact_rotational_images(hedgerow_map, builder_cells):
+    """Both seats' first squad must start the same walk from the same place."""
+    m = hedgerow_map
+    assert _rotate(m, builder_cells[0]) == builder_cells[1]
 
 
 def test_each_point_is_the_same_path_distance_from_its_owner_as_its_partner(hedgerow_map, hq_distances):
