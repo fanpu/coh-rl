@@ -4,7 +4,8 @@ Skipped cleanly when Playwright or a Chromium/Chrome binary is missing (this
 repo deliberately does not run `playwright install`; it points Playwright at
 whatever browser the machine already has — see `tests/viewer/chromium.py`).
 
-Everything here is on a leash: the page is opened with `#paused` so it never
+The harness lives in `conftest.py`, shared with `test_viewer_fog.py`:
+everything is on a leash there — the page opens with `#paused` so it never
 races an animation loop, every Playwright call has an explicit timeout, and an
 autouse `hard_deadline` fixture fails a test that blows its budget rather than
 letting it stall the suite (`evaluate()` has no timeout of its own).
@@ -15,163 +16,22 @@ unit-showcase test also refreshes `docs/img/viewer-units.png`.
 
 from __future__ import annotations
 
-import socketserver
-import threading
-from pathlib import Path
-
 import pytest
 
-from coh.viewer.__main__ import STATIC_DIR, make_handler
-from coh.viewer.frames import build_frames, frames_json_gz
-from tests.helpers import fixture_data
-from tests.viewer.chromium import find_chromium
-from tests.viewer.conftest import deadline, play
+from tests.viewer.conftest import (  # noqa: F401  (fixtures are used by name)
+    ACTION_MS,
+    DOC_IMAGES,
+    canvas_digest,
+    canvas_variance,
+    needs_chromium,
+    open_page,
+    playwright_or_skip,
+    shoot,
+)
 
 pytestmark = pytest.mark.slow
 
-sync_playwright = pytest.importorskip("playwright.sync_api", reason="playwright is not installed").sync_playwright
-
-CHROMIUM = find_chromium()
-needs_chromium = pytest.mark.skipif(CHROMIUM is None, reason="no Chromium/Chrome binary on this machine")
-
-DOC_IMAGES = Path(__file__).resolve().parents[2] / "docs" / "img"
-
-MATCH_S = 120.0          # long enough for captures, training and firefights
-ACTION_MS = 15_000       # any single Playwright action
-NAV_MS = 20_000          # page load
-TEST_DEADLINE_S = 90.0   # hard ceiling per test
-SETUP_DEADLINE_S = 90.0  # hard ceiling for module-scoped setup
-LAUNCH_ARGS = ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
-
-
-@pytest.fixture(autouse=True)
-def hard_deadline(request):
-    with deadline(TEST_DEADLINE_S, request.node.name):
-        yield
-
-
-class _Server(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-
-
-def _serve(handler_cls):
-    """Run `handler_cls` on an ephemeral port; yields the URL, always shuts down."""
-    server = _Server(("127.0.0.1", 0), handler_cls)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield "http://127.0.0.1:%d/" % server.server_address[1]
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=10)
-        assert not thread.is_alive(), "the frames server thread did not stop"
-
-
-@pytest.fixture(scope="module")
-def viewer_url():
-    """Serve one match's frames on an ephemeral port for the whole module."""
-    with deadline(SETUP_DEADLINE_S, "building the frame stream"):
-        frames = build_frames(play(MATCH_S), 2, data=fixture_data())
-    yield from _serve(make_handler(frames_json_gz(frames)))
-
-
-@pytest.fixture(scope="module")
-def broken_url():
-    """Serve the page but no frames, to exercise the client's error path."""
-    import http.server
-
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
-
-        def log_message(self, fmt, *args):
-            pass
-
-    yield from _serve(Handler)
-
-
-@pytest.fixture(scope="module")
-def browser():
-    if CHROMIUM is None:
-        pytest.skip("no Chromium/Chrome binary on this machine")
-    with sync_playwright() as pw:
-        with deadline(SETUP_DEADLINE_S, "launching Chromium"):
-            instance = pw.chromium.launch(executable_path=CHROMIUM, args=LAUNCH_ARGS)
-        try:
-            yield instance
-        finally:
-            instance.close()
-
-
-def open_page(browser, url, width=1280, height=860):
-    """A page with explicit timeouts everywhere; never auto-plays."""
-    pg = browser.new_page(viewport={"width": width, "height": height})
-    pg.set_default_timeout(ACTION_MS)
-    pg.set_default_navigation_timeout(NAV_MS)
-    errors: list[str] = []
-    pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-    pg.on("pageerror", lambda e: errors.append("pageerror: %s" % e))
-    pg.errors = errors
-    pg.goto(url + "#paused", wait_until="load", timeout=NAV_MS)
-    return pg
-
-
-def wait_loaded(pg, tries=60, gap_ms=250):
-    """Poll (rather than `wait_for_function`, which proved flaky on this page)."""
-    for _ in range(tries):
-        if pg.evaluate("!!(window.__viewer && window.__viewer.state().frames)"):
-            return
-        pg.wait_for_timeout(gap_ms)
-    raise AssertionError("the frame stream never finished loading")
-
-
-@pytest.fixture
-def page(browser, viewer_url):
-    """A freshly loaded, paused viewer page; `page.errors` collects console errors."""
-    pg = open_page(browser, viewer_url)
-    try:
-        wait_loaded(pg)
-        assert pg.evaluate("window.__viewer.state().playing") is False, "#paused should not auto-play"
-        yield pg
-    finally:
-        pg.close()
-
-
-def shoot(pg, path):
-    """Force a synchronous redraw, then capture (never wait on rAF timing)."""
-    pg.evaluate("window.__viewer.redraw()")
-    pg.screenshot(path=str(path), timeout=ACTION_MS)
-
-
-def canvas_variance(pg):
-    """Spread of the rendered pixels — a blank canvas scores ~0."""
-    return pg.evaluate(
-        """(() => {
-          var cv = document.getElementById('cv');
-          var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-          var n = 0, sum = 0, sq = 0;
-          for (var i = 0; i < d.length; i += 4 * 97) {
-            var v = (d[i] + d[i + 1] + d[i + 2]) / 3;
-            n++; sum += v; sq += v * v;
-          }
-          return sq / n - (sum / n) * (sum / n);
-        })()"""
-    )
-
-
-def canvas_digest(pg):
-    """A cheap fingerprint of the rendered pixels, to prove a redraw changed something."""
-    return pg.evaluate(
-        """(() => {
-          var cv = document.getElementById('cv');
-          var d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-          var h = 2166136261;
-          for (var i = 0; i < d.length; i += 4 * 31) { h ^= d[i] + d[i + 1] * 3 + d[i + 2] * 7; h = (h * 16777619) | 0; }
-          return h;
-        })()"""
-    )
+playwright_or_skip()
 
 
 # --- the basics -------------------------------------------------------------
@@ -220,6 +80,10 @@ def test_fog_and_cover_toggles(page, tmp_path):
     assert page.evaluate("window.__viewer.state().fogMode") == 1
     assert "team 0" in page.locator("#btn-fog").inner_text()
     assert canvas_variance(page) > 50
+    # a team view must actually withhold something; what exactly is nailed
+    # down entity by entity in test_viewer_fog.py
+    stats = page.evaluate("window.__viewer.stats()")
+    assert stats["hiddenSquads"] + stats["hiddenBuildings"] + stats["hiddenEffects"] > 0, stats
 
     page.keyboard.press("f")
     assert page.evaluate("window.__viewer.state().fogMode") == 2

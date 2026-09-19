@@ -3,6 +3,8 @@ connectivity and observation-post bookkeeping."""
 
 from __future__ import annotations
 
+from coh.maps.format import center_of
+from coh.sim.constants import CELL_M
 from coh.sim.orders import Capture, Stop
 from coh.sim.sim import PlayerSetup
 from coh.sim.state import PointState, SquadState
@@ -110,6 +112,103 @@ def test_progress_decays_to_resting_value_without_capturers():
     assert point.owner_team == 0
     assert point.progress > progress_after_push
     assert point.capturing_team is None
+
+
+# ---------------------------------------------------------------------------
+# Contesting: *presence* stalls a point, a `Capture` order is what moves it
+# ---------------------------------------------------------------------------
+
+
+def test_a_defender_without_a_capture_order_blocks_neutralization(no_combat):
+    """The spec's rule: a point is contested whenever eligible infantry of
+    more than one team stand on it, whatever they were told to do. Holding
+    your own point is enough to stop it being neutralized."""
+    sim = make_sim()
+    sim.state.points["mid"] = PointState(owner_team=0, progress=1.0)
+    defender = spawn(sim, 0, "rifles", (20, 15))  # standing there, no order
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+
+    sim.run(NEUTRALIZE_TICKS * 2)
+
+    point = sim.state.points["mid"]
+    assert defender.order is None
+    assert point.owner_team == 0
+    assert point.progress == 1.0  # stalled, and stalled does not decay either
+    assert point.capturing_team is None
+
+
+def test_killing_the_defender_lets_the_neutralization_resume(no_combat):
+    sim = make_sim()
+    sim.state.points["mid"] = PointState(owner_team=0, progress=1.0)
+    defender = spawn(sim, 0, "rifles", (20, 15))
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+    sim.run(NEUTRALIZE_TICKS)
+    assert sim.state.points["mid"].progress == 1.0
+
+    del sim.state.squads[defender.id]
+    sim.run(NEUTRALIZE_TICKS)
+
+    assert sim.state.points["mid"].owner_team is None
+
+
+def test_a_pinned_defender_still_contests(monkeypatch, no_combat):
+    from coh.sim.systems import suppression
+
+    monkeypatch.setattr(suppression, "run", lambda sim: None)
+
+    sim = make_sim()
+    defender = spawn(sim, 0, "rifles", (20, 15))
+    defender.pinned = True
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+
+    sim.run(CAPTURE_TICKS * 2)
+
+    assert sim.state.points["mid"].owner_team is None
+    assert sim.state.points["mid"].progress == 0.0
+
+
+def test_a_retreating_or_garrisoned_defender_does_not_contest(no_combat):
+    from coh.sim.systems import garrison
+
+    # A house 6 m from 'mid', inside the 10 m capture radius.
+    sim = make_sim(neutral_buildings=[{"def": "house", "cell": [22, 14]}])
+    house = next(b for b in sim.state.buildings.values() if b.neutral)
+    hiding = spawn(sim, 0, "rifles", (20, 15))
+    garrison.enter(sim, hiding, house)
+    running = spawn(sim, 0, "rifles", (20, 15))
+    running.state = SquadState.RETREATING
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+
+    sim.run(CAPTURE_TICKS)
+
+    assert sim.state.points["mid"].owner_team == 1
+
+
+def test_a_vehicle_does_not_contest(no_combat):
+    """`capture_rate == 0` is not eligible presence, only eligible capture."""
+    sim = make_sim()
+    spawn(sim, 0, "tank", (20, 15))
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+
+    sim.run(CAPTURE_TICKS)
+
+    assert sim.state.points["mid"].owner_team == 1
+
+
+def test_an_out_of_radius_enemy_does_not_contest(no_combat):
+    sim = make_sim()
+    spawn(sim, 0, "rifles", (20 + 20, 15))  # outside the 10 m capture radius
+    attacker = spawn(sim, 1, "rifles", (20, 15))
+    sim.issue(1, [Capture(attacker.id, "mid")])
+
+    sim.run(CAPTURE_TICKS)
+
+    assert sim.state.points["mid"].owner_team == 1
 
 
 # ---------------------------------------------------------------------------
@@ -255,10 +354,44 @@ def _chain_map():
 
 
 def _chain_sim():
-    return make_sim(
+    sim = make_sim(
         game_map=_chain_map(),
         players=[PlayerSetup(faction="us", team=0, start_slot=0), PlayerSetup(faction="us", team=1, start_slot=1)],
     )
+    # This map is only 6 cells tall, so each side's starting builder stands
+    # within the 10 m capture radius of the neighbouring point — and mere
+    # presence now contests a point. Park them out of the way: these tests
+    # are about connectivity, not about who is standing where.
+    for squad in sim.state.squads.values():
+        squad.pos = center_of((0 if squad.owner == 0 else sim.map.width - 1, sim.map.height - 1), CELL_M)
+    return sim
+
+
+def test_hq_sectors_follow_the_player_setups_not_the_maps_start_teams():
+    """Two players on one team, in slots the map labels with *different*
+    teams: both HQ sectors belong to the team, at setup and on every
+    recompute. `recompute_connectivity` used to read `StartDef.team` and
+    silently drop the second HQ sector."""
+    sim = make_sim(
+        players=[
+            PlayerSetup(faction="us", team=0, start_slot=0),
+            PlayerSetup(faction="us", team=0, start_slot=1),
+        ],
+    )
+    # Default map: slot 0 sits in sector 'a', slot 1 in sector 'c'; the map
+    # labels them team 0 and team 1.
+    assert {s.team for s in sim.map.starts} == {0, 1}
+
+    hq_sectors = sim.hq_sectors[0]
+    assert len(hq_sectors) == 2
+    assert sim.state.connected[0] == hq_sectors
+
+    territory.recompute_connectivity(sim)
+    assert sim.state.connected[0] == hq_sectors
+
+    # And both HQ points stay uncapturable rather than only the first.
+    assert territory.is_hq_point(sim, "west")
+    assert territory.is_hq_point(sim, "east")
 
 
 def test_connectivity_recomputes_over_owned_chain():
@@ -292,6 +425,11 @@ def test_cutting_middle_sector_strands_far_sector_and_restores(no_combat):
 
     assert sim.state.connected[0] == [a, b, c]
 
+    # The capturers move on: infantry *standing* on a point contests it, so
+    # leaving squad_b there would block the counter-attack by itself.
+    squad_b.pos = center_of((2, 2), CELL_M)
+    squad_c.pos = center_of((2, 2), CELL_M)
+
     # Enemy neutralizes the middle sector's point: 'c' becomes unreachable
     # even though team 0 still owns it.
     enemy = spawn(sim, 1, "rifles", (8, 2))
@@ -300,8 +438,10 @@ def test_cutting_middle_sector_strands_far_sector_and_restores(no_combat):
     assert sim.state.points["midb"].owner_team is None
     assert sim.state.connected[0] == [a]
 
-    # Retake it: stop the enemy, resume team 0's capture from scratch.
+    # Retake it: send the enemy home, resume team 0's capture from scratch.
     sim.issue(1, [Stop(enemy.id)])
+    enemy.pos = center_of((22, 2), CELL_M)
+    squad_b.pos = center_of((8, 2), CELL_M)
     sim.issue(0, [Capture(squad_b.id, "midb")])
     sim.run(CAPTURE_TICKS)
     assert sim.state.points["midb"].owner_team == 0

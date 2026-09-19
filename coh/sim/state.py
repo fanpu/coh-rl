@@ -118,6 +118,10 @@ class QueueItem:
     kind: str  # "train" | "research"
     item_id: str
     remaining_s: float
+    # A finished `train` item whose unit has nowhere to stand waits at the
+    # head of the queue; this records that its `unit_blocked` event has
+    # already been announced, so it is announced once and not every tick.
+    blocked: bool = False
 
 
 @dataclass
@@ -283,7 +287,7 @@ def _building(b: Building) -> dict[str, Any]:
         "cell": list(b.cell),
         "hp": _r(b.hp),
         "progress": _r(b.progress),
-        "queue": [[q.kind, q.item_id, _r(q.remaining_s)] for q in b.queue],
+        "queue": [[q.kind, q.item_id, _r(q.remaining_s), q.blocked] for q in b.queue],
         "garrison": list(b.garrison),
         "neutral": b.neutral,
     }

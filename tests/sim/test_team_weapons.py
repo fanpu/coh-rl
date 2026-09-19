@@ -374,6 +374,23 @@ def test_wiping_the_crew_leaves_an_abandoned_shell_rather_than_destroying_it():
     assert not [e for e in events(sim, "squad_destroyed") if e.data["id"] == hmg.id]
 
 
+def test_an_abandoned_shell_does_not_hand_its_upgrades_to_the_next_crew():
+    """The upgrades were bought by the squad that died, not by the gun: a
+    re-crewing enemy must not inherit them (nor a half-paid pending one)."""
+    sim = tw_sim()
+    hmg = trim(deployed(sim, 0, "hmg_team", GUN_CELL), count=1, hp=10.0)
+    hmg.upgrades.append("bar")
+    hmg.pending_upgrade = "bar_upgrade"
+    hmg.upgrade_done_tick = sim.state.tick + 1000
+    enemy = killer(sim, EAST_CELL)
+
+    tick_systems(sim, 40, ready=enemy)
+
+    assert hmg.abandoned
+    assert hmg.upgrades == []
+    assert hmg.pending_upgrade is None
+
+
 def test_an_abandoned_shell_neither_scouts_nor_draws_fire():
     sim = tw_sim()
     shell = abandoned_shell(sim, GUN_CELL)

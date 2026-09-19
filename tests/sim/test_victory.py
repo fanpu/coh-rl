@@ -112,7 +112,7 @@ def test_time_limit_tie_is_a_draw():
     assert sim.state.winner == -1
 
 
-def test_ticking_after_the_end_changes_nothing():
+def test_ticking_after_the_end_changes_nothing_but_drops_stale_events():
     sim = _vp_sim()
     sim.state.tickets[1] = 0.0
     sim.tick()
@@ -120,11 +120,15 @@ def test_ticking_after_the_end_changes_nothing():
 
     tick_after_end = sim.state.tick
     tickets_after_end = dict(sim.state.tickets)
-    events_after_end = list(sim.state.events)
+    hash_after_end = sim.state_hash()
+    assert any(e.kind == "game_over" for e in sim.state.events)
 
     for _ in range(5):
         sim.tick()
 
     assert sim.state.tick == tick_after_end
     assert sim.state.tickets == tickets_after_end
-    assert sim.state.events == events_after_end
+    assert sim.state_hash() == hash_after_end
+    # The `game_over` event belongs to the tick it happened on; a no-op tick
+    # must not leave it looking like it just happened again.
+    assert sim.state.events == []

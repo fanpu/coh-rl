@@ -19,7 +19,8 @@ function:
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
+import numbers
+from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING, Any, Callable, get_origin, get_type_hints
 
 import numpy as np
@@ -165,6 +166,97 @@ OK = OrderResult(ok=True)
 
 
 # ---------------------------------------------------------------------------
+# Payload shape
+# ---------------------------------------------------------------------------
+#
+# Orders come from agents, from replay JSON and from RL policies, so a field
+# can hold literally anything. Every order field falls into one of four
+# shapes, derived once from the dataclass' own type hints so a new order type
+# is covered the moment it is declared.
+
+_CELL, _INT, _STR, _REAL = "cell", "int", "str", "real"
+
+_HINT_KINDS: dict[Any, str] = {int: _INT, str: _STR, float: _REAL}
+
+
+def _field_kind(hint: Any) -> str:
+    if get_origin(hint) is tuple:
+        return _CELL
+    kind = _HINT_KINDS.get(hint)
+    if kind is None:  # pragma: no cover - a new field type is a code change
+        raise TypeError(f"no payload-shape rule for order field type {hint!r}; add one to _HINT_KINDS")
+    return kind
+
+
+FIELD_KINDS: dict[type[Order], tuple[tuple[str, str], ...]] = {
+    cls: tuple((f.name, _field_kind(get_type_hints(cls)[f.name])) for f in fields(cls))
+    for cls in ORDER_TYPES.values()
+}
+
+
+def _is_int(value: Any) -> bool:
+    """A whole number, excluding `bool` (`True` is not a squad id)."""
+    return isinstance(value, numbers.Integral) and not isinstance(value, bool)
+
+
+def _is_real(value: Any) -> bool:
+    return isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _as_cell(value: Any) -> Any:
+    """`[4, 5]` (JSON) or `(np.int64(4), np.int64(5))` -> `(4, 5)`; anything
+    else is returned untouched for `payload_problem` to reject."""
+    if isinstance(value, (tuple, list)) and len(value) == 2 and all(_is_int(v) for v in value):
+        return (int(value[0]), int(value[1]))
+    return value
+
+
+def normalized(order: Order) -> Order:
+    """`order` with its cell fields in canonical `(int, int)` form.
+
+    JSON (and `order_from_dict`'s callers) hand cells over as lists, and a
+    numpy-flavoured policy hands over `np.int64`; order equality and the state
+    hash both want plain int tuples. Anything that is not cell-shaped is left
+    alone — `payload_problem` is what rejects it.
+    """
+    spec = FIELD_KINDS.get(type(order))
+    if spec is None:
+        return order  # not a known order: `validate_order` rejects it
+    changes = {}
+    for name, kind in spec:
+        if kind is not _CELL:
+            continue
+        value = getattr(order, name)
+        canonical = _as_cell(value)
+        if canonical is not value:
+            changes[name] = canonical
+    return replace(order, **changes) if changes else order
+
+
+def payload_problem(order: Order) -> str:
+    """Why `order`'s payload is not even the right shape; `""` when it is.
+
+    This gate runs before any rule that indexes the state with a field value,
+    so a hostile payload comes back as an `OrderResult` instead of a
+    `TypeError` / `KeyError` / `IndexError` out of the middle of the sim.
+    """
+    for name, kind in FIELD_KINDS[type(order)]:
+        value = getattr(order, name)
+        if kind is _CELL:
+            if not (isinstance(value, tuple) and len(value) == 2 and all(_is_int(v) for v in value)):
+                return f"{name} must be a pair of integer cell coordinates, got {value!r}"
+        elif kind is _INT:
+            if not _is_int(value):
+                return f"{name} must be an integer id, got {value!r}"
+        elif kind is _STR:
+            if not isinstance(value, str):
+                return f"{name} must be a string, got {value!r}"
+        elif not _is_real(value):
+            return f"{name} must be a finite number, got {value!r}"
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # JSON form
 # ---------------------------------------------------------------------------
 
@@ -193,7 +285,13 @@ def order_from_dict(d: dict[str, Any]) -> Order:
             f"{name}: expected field(s) {sorted(expected)}, got {sorted(given)}"
         )
     tuple_fields = TUPLE_FIELDS[cls]
-    kwargs = {key: tuple(value) if key in tuple_fields else value for key, value in given.items()}
+    kwargs: dict[str, Any] = {}
+    for key, value in given.items():
+        if key in tuple_fields:
+            if not isinstance(value, (list, tuple)):
+                raise ValueError(f"{name}.{key} must be a list of cell coordinates, got {value!r}")
+            value = tuple(value)
+        kwargs[key] = value
     return cls(**kwargs)
 
 
@@ -265,16 +363,32 @@ def apply_attack_move(sim: "Sim", order: Order) -> None:
     movement.start_path(sim, squad, order, order.cell, SquadState.MOVING)  # type: ignore[attr-defined]
 
 
+def retreat_building(sim: "Sim", squad: "Squad") -> "Building | None":
+    """Where `squad` runs to: its owner's HQ while that stands, else the
+    nearest surviving building of the squad's *team* that can reinforce.
+
+    A player whose HQ has been destroyed still has somewhere to retreat to as
+    long as it — or a teammate — holds a barracks; when nothing is left,
+    `validate_retreat` refuses the order rather than crashing.
+    """
+    hq = sim.state.buildings.get(sim.state.players[squad.owner].hq_id)
+    if hq is not None:
+        return hq
+    return _nearest_team_reinforce_building(sim, squad, in_range=False)
+
+
 def validate_retreat(sim: "Sim", player: "Player", order: Order) -> OrderResult:
     """Vehicles and abandoned squads cannot retreat; everything else can
     (including garrisoned squads and team weapons -- `apply_retreat` handles
-    both specially)."""
+    both specially) as long as there is somewhere left to retreat to."""
     squad = sim.state.squads[order.squad]  # type: ignore[attr-defined]
     sdef = sim.data.squads[squad.def_id]
     if sdef.kind == "vehicle":
         return OrderResult(False, f"squad {squad.id} is a vehicle and cannot retreat")
     if squad.abandoned:
         return OrderResult(False, f"squad {squad.id} is abandoned and cannot retreat")
+    if retreat_building(sim, squad) is None:
+        return OrderResult(False, f"squad {squad.id} has no base left to retreat to")
     return OK
 
 
@@ -301,13 +415,15 @@ def apply_retreat(sim: "Sim", order: Order) -> None:
         # `settle=False`: `start_path` below puts the squad in RETREATING.
         garrison.leave(sim, squad, settle=False)
 
-    player = sim.state.players[squad.owner]
-    hq = sim.state.buildings[player.hq_id]
-    bdef = sim.data.buildings[hq.def_id]
+    home = retreat_building(sim, squad)
+    if home is None:  # pragma: no cover - validate_retreat rejects this first
+        return
+    bdef = sim.data.buildings.get(home.def_id)
+    footprint = bdef.footprint if bdef is not None else (1, 1)
     start_cell = cell_of(squad.pos)
-    goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), hq.cell, bdef.footprint, start_cell)
+    goal_cell = pathfinding.nearest_adjacent_passable(_passable(sim, squad), home.cell, footprint, start_cell)
     if goal_cell is None:
-        goal_cell = hq.cell
+        goal_cell = home.cell
     movement.start_path(sim, squad, order, goal_cell, SquadState.RETREATING)
 
 
@@ -654,9 +770,11 @@ def apply_buy_upgrade(sim: "Sim", order: Order) -> None:
 # keep going, stop for lack of range/funds, or complete its current model.
 
 
-def reinforce_building(sim: "Sim", squad: "Squad") -> "Building | None":
+def _nearest_team_reinforce_building(sim: "Sim", squad: "Squad", *, in_range: bool) -> "Building | None":
     """The nearest complete building, owned by a player on `squad`'s team,
-    with `reinforce_radius > 0` and within range of `squad` -- or `None`."""
+    with `reinforce_radius > 0` -- optionally restricted to ones whose radius
+    actually covers `squad` (`Reinforce`) rather than merely existing
+    (`Retreat`'s fallback home)."""
     team = sim.state.players[squad.owner].team
     best: "Building | None" = None
     best_dist = math.inf
@@ -671,11 +789,17 @@ def reinforce_building(sim: "Sim", squad: "Squad") -> "Building | None":
         if bdef is None or bdef.reinforce_radius <= 0.0:
             continue
         dist = _building_distance_m(building, bdef, squad.pos)
-        if dist > bdef.reinforce_radius:
+        if in_range and dist > bdef.reinforce_radius:
             continue
         if dist < best_dist:
             best, best_dist = building, dist
     return best
+
+
+def reinforce_building(sim: "Sim", squad: "Squad") -> "Building | None":
+    """The nearest complete building, owned by a player on `squad`'s team,
+    with `reinforce_radius > 0` and within range of `squad` -- or `None`."""
+    return _nearest_team_reinforce_building(sim, squad, in_range=True)
 
 
 def _building_distance_m(building: "Building", bdef, pos: np.ndarray) -> float:
@@ -775,6 +899,11 @@ def validate_order(sim: "Sim", player_id: int, order: Order) -> OrderResult:
     if handler is None:
         return OrderResult(False, f"unknown order {type(order).__name__}")
 
+    order = normalized(order)
+    problem = payload_problem(order)
+    if problem:
+        return OrderResult(False, problem)
+
     player = sim.state.players.get(player_id)
     if player is None:
         return OrderResult(False, f"no such player {player_id}")
@@ -816,7 +945,12 @@ def apply_order(sim: "Sim", order: Order) -> None:
     Any new order cancels a pending re-crew: only `apply_move` sets
     `recrew_target`, and only when the move is actually aimed at an
     abandoned team weapon.
+
+    The order is re-`normalized` here rather than handed down from
+    `validate_order` (which has only an `OrderResult` to return), so the cell
+    the appliers store — and the state hash — is always a plain int tuple.
     """
+    order = normalized(order)
     squad_id = getattr(order, "squad", None)
     if squad_id is not None:
         squad = sim.state.squads.get(squad_id)

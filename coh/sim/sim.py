@@ -14,6 +14,7 @@ import numpy as np
 from coh.data.schema import BuildingDef, GameData
 from coh.maps.format import GameMap, StartDef, center_of
 from coh.sim import orders as orders_mod
+from coh.sim import pathfinding
 from coh.sim import systems
 from coh.sim.orders import Order, OrderResult
 from coh.sim.state import (
@@ -89,22 +90,49 @@ class Sim:
         self._path_cache: dict[tuple, list[tuple[int, int]] | None] = {}
         self._path_cache_version: int = -1
 
+        # `team -> sorted sector ids of that team's HQ sectors`; filled in by
+        # `_setup_players` and read by `systems/territory.py`.
+        self.hq_sectors: dict[int, list[int]] = {}
+
         self._setup_players()
         self._place_neutral_buildings()
+        # The opening state is a state agents observe and order against, so
+        # its visibility has to be real: without this every `Attack` issued
+        # before the first `tick()` was refused as "not visible".
+        systems.vision.run(self)
 
     # -- setup -----------------------------------------------------------
 
-    def _setup_players(self) -> None:
-        starts = {s.slot: s for s in self.map.starts}
-        econ = self.data.economy
+    def _compute_hq_sectors(self) -> dict[int, list[int]]:
+        """`team -> sorted sector ids of that team's HQs`, from the *player
+        setups*.
 
+        A map's `StartDef.team` is only the slot's default: two players may
+        sit on one team in slots the map labels differently. This is the one
+        definition every consumer reads (`_setup_players`'s opening supply,
+        `territory.recompute_connectivity`, `territory.hq_point_ids`), so
+        they can never disagree about who owns which HQ sector.
+        """
+        starts = {s.slot: s for s in self.map.starts}
+        sectors: dict[int, set[int]] = {}
         for player_id, setup in enumerate(self.player_setups):
             start = starts.get(setup.start_slot)
             if start is None:
                 raise SimError(f"player {player_id}: map {self.map.name!r} has no start slot {setup.start_slot}")
+            sectors.setdefault(setup.team, set()).add(start.sector)
+        return {team: sorted(sectors[team]) for team in sorted(sectors)}
+
+    def _setup_players(self) -> None:
+        starts = {s.slot: s for s in self.map.starts}
+        econ = self.data.economy
+        self.hq_sectors = self._compute_hq_sectors()
+
+        for player_id, setup in enumerate(self.player_setups):
+            start = starts[setup.start_slot]  # `_compute_hq_sectors` validated the slot
 
             hq_def = self._hq_def(setup.faction)
-            hq = self.spawn_building(player_id, hq_def.id, start.hq_cell)
+            hq_cell = self._hq_footprint_cell(start.hq_cell, hq_def.footprint)
+            hq = self.spawn_building(player_id, hq_def.id, hq_cell)
             self.state.players[player_id] = Player(
                 id=player_id,
                 team=setup.team,
@@ -117,7 +145,7 @@ class Sim:
             self.spawn_squad(
                 player_id,
                 self._builder_def_id(setup.faction),
-                center_of(self._builder_cell(start.hq_cell, hq_def.footprint)),
+                center_of(self._builder_cell(hq_cell, hq_def.footprint)),
             )
             self._claim_hq_sector(start, setup.team)
 
@@ -125,16 +153,7 @@ class Sim:
         self.state.tickets = {team: float(econ.tickets) for team in teams}
         self.state.visible = {team: np.zeros((self.map.height, self.map.width), dtype=bool) for team in teams}
         self.state.ghosts = {team: {} for team in teams}
-        self.state.connected = {
-            team: sorted(
-                {
-                    starts[setup.start_slot].sector
-                    for setup in self.player_setups
-                    if setup.team == team
-                }
-            )
-            for team in teams
-        }
+        self.state.connected = {team: list(self.hq_sectors.get(team, ())) for team in teams}
 
     def _hq_def(self, faction: str) -> BuildingDef:
         for def_id in sorted(self.data.buildings):
@@ -158,17 +177,46 @@ class Sim:
             return builders[0]
         raise SimError("no squad def can construct buildings; cannot place a starting builder")
 
-    def _builder_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
-        """Nearest infantry-passable cell south of the HQ footprint."""
-        cx0, cy0 = hq_cell
+    def _hq_footprint_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
+        """Top-left cell of an HQ footprint *centred* on the start's `hq_cell`.
+
+        Anchoring the footprint top-left made the two seats of a symmetric map
+        asymmetric: with a 4x4 HQ the south-east seat sat two cells deeper in
+        its corner than the north-west one, which is a real bias in a mirror
+        match. Centring costs one convention, documented here for map authors:
+
+        - an **odd** footprint side is centred exactly on `hq_cell`, so the
+          two seats line up when their `hq_cell`s are images of each other
+          under `x -> width - 1 - x` (the cell-grid reversal);
+        - an **even** side has no centre cell, and `hq_cell` names the cell
+          just past the middle (offset `n // 2`), so the two seats line up
+          when their `hq_cell`s are images under `x -> width - x`.
+
+        Either way the offset is `footprint // 2`. A footprint that would fall
+        off the map is clamped back on; on a symmetric map both seats clamp by
+        the same amount in opposite directions, so the symmetry survives.
+        """
         w, h = footprint
-        centre_x = cx0 + (w - 1) / 2
-        columns = sorted(range(self.map.width), key=lambda cx: (abs(cx - centre_x), cx))
-        for cy in range(cy0 + h, self.map.height):
-            for cx in columns:
-                if self.map.pass_inf[cy, cx]:
-                    return (cx, cy)
-        raise SimError(f"no infantry-passable cell south of the HQ footprint at {hq_cell}")
+        cx = min(max(hq_cell[0] - w // 2, 0), max(self.map.width - w, 0))
+        cy = min(max(hq_cell[1] - h // 2, 0), max(self.map.height - h, 0))
+        return (cx, cy)
+
+    def _builder_cell(self, hq_cell: tuple[int, int], footprint: tuple[int, int]) -> tuple[int, int]:
+        """Infantry-passable cell beside the HQ, on the side facing the map centre.
+
+        "South of the footprint" pointed the north-west seat's builder at the
+        middle of the map and the south-east seat's away from it — a measured
+        13 m head start for seat 0.
+        """
+        cell = pathfinding.adjacent_cell_toward(
+            self.map.pass_inf,
+            hq_cell,
+            footprint,
+            pathfinding.grid_centre(self.map.width, self.map.height),
+        )
+        if cell is None:
+            raise SimError(f"no infantry-passable cell anywhere near the HQ footprint at {hq_cell}")
+        return cell
 
     def _claim_hq_sector(self, start: StartDef, team: int) -> None:
         """A team owns its HQ sector's point from the start."""
@@ -263,7 +311,15 @@ class Sim:
     # -- orders / tick ----------------------------------------------------
 
     def issue(self, player_id: int, orders: list[Order]) -> list[OrderResult]:
-        """Validate and apply orders now; invalid ones are counted, never raised."""
+        """Validate and apply orders now; invalid ones are counted, never raised.
+
+        Once the game is over every order is refused, but none of them counts
+        against the player: there was nothing left to order, so the refusal is
+        the match's fault rather than the agent's.
+        """
+        if self.state.winner is not None:
+            return [OrderResult(False, "game over") for _ in orders]
+
         results: list[OrderResult] = []
         for order in orders:
             result = orders_mod.validate_order(self, player_id, order)
@@ -277,8 +333,15 @@ class Sim:
         return results
 
     def tick(self) -> None:
-        """Run one simulation tick. A no-op once the game has been won."""
+        """Run one simulation tick. A no-op once the game has been won.
+
+        The last tick's events are still dropped: nothing may keep re-reading
+        the `game_over` event as if it had just happened. (`replay.resimulate`
+        and `CohEnv.step` both stop at the winner, so the frame builder never
+        sees this path.)
+        """
         if self.state.winner is not None:
+            self.state.events.clear()
             return
         self.state.events.clear()
         for system in systems.SYSTEM_ORDER:

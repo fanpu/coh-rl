@@ -853,6 +853,44 @@ def test_attack_order_is_cleared_after_the_target_stays_unseen():
     assert shooter.target_id is None
 
 
+def test_attack_order_is_cleared_when_the_house_it_targeted_empties():
+    """A neutral building is only a target while enemies hide in it. Once the
+    last of them leaves it can never be engageable again, so the pursuing
+    squad must drop the order instead of re-pathing at it forever."""
+    from coh.sim.systems import garrison
+
+    sim = make_sim(rows(), starts=STARTS, neutral_buildings=[{"def": "house", "cell": [27, 11]}])
+    house = next(b for b in sim.state.buildings.values() if b.neutral)
+    hiding = trim(spawn(sim, 1, "rifles", (27, 11)), disarm=True)
+    garrison.enter(sim, hiding, house)
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    vision.run(sim)
+    assert sim.issue(0, [Attack(shooter.id, house.id)])[0].ok
+
+    garrison.leave(sim, hiding, settle=True)
+    vision.run(sim)
+    combat.run(sim)
+
+    assert shooter.order is None
+    assert shooter.target_id is None
+
+
+def test_attack_order_is_cleared_when_the_target_joins_our_own_team():
+    """Re-crewing an abandoned gun hands it to the attacker's team; chasing
+    a friend is not a thing an `Attack` order may keep doing."""
+    sim = combat_sim()
+    shooter = trim(spawn(sim, 0, "rifles", SHOOTER_CELL))
+    target = trim(spawn(sim, 1, "rifles", (SHOOTER_CELL[0] + 20, SHOOTER_CELL[1])), disarm=True)
+    sim.state.visible[0][:, :] = True
+    assert sim.issue(0, [Attack(shooter.id, target.id)])[0].ok
+
+    target.owner = 0  # what `try_recrew` does when a squad takes the gun
+    combat.run(sim)
+
+    assert shooter.order is None
+    assert shooter.target_id is None
+
+
 def test_stop_order_clears_an_attack_order():
     from coh.sim.orders import Stop
 

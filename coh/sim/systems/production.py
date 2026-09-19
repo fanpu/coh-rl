@@ -17,8 +17,10 @@ Three independent jobs run each tick:
    builder elsewhere simply stops its contribution; the site keeps whatever
    progress it has, and re-issuing the same `Build` on it resumes at no cost.
 3. **Building queues.** A completed building ticks down the *head* of its
-   FIFO queue only. A finished `train` item spawns the squad on the nearest
-   passable cell south of the footprint; a finished `research` item adds the
+   FIFO queue only. A finished `train` item spawns the squad on the passable
+   cell beside the footprint that faces the map centre (`_rally_cell`), and
+   waits at the head of the queue — announcing itself once as `unit_blocked`
+   — if there is no such cell at all; a finished `research` item adds the
    upgrade to the owning player.
 
 Public helpers (`requirement_met`, `can_afford`, `pay`, `build_site_problem`,
@@ -29,13 +31,11 @@ against, so the rules live here rather than being split across both modules.
 from __future__ import annotations
 
 import math
-from collections import deque
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 from coh.maps.format import center_of
 from coh.sim import orders as orders_mod
+from coh.sim import pathfinding
 from coh.sim.constants import (
     BUILD_RANGE_CELLS,
     CELL_M,
@@ -53,12 +53,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # Construction progress is accumulated by repeated float addition; anything
 # this close to 1.0 counts as finished.
 _PROGRESS_EPS = 1e-9
-
-# Fixed 8-neighbour expansion order, so the "nearest passable cell" search
-# below resolves ties the same way on every run and platform.
-_RING_OFFSETS: tuple[tuple[int, int], ...] = tuple(
-    (dx, dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dx, dy) != (0, 0)
-)
 
 
 def run(sim: "Sim") -> None:
@@ -358,21 +352,37 @@ def _advance_queues(sim: "Sim") -> None:
         if building.owner is None or building.progress < 1.0 or not building.queue:
             continue
         head = building.queue[0]
-        head.remaining_s -= DT
         if head.remaining_s > 0.0:
-            continue
-        building.queue.pop(0)
+            head.remaining_s -= DT
+            if head.remaining_s > 0.0:
+                continue
         if head.kind == "train":
-            _spawn_trained_squad(sim, building, head.item_id)
+            if not _spawn_trained_squad(sim, building, head.item_id):
+                # Nowhere to put it: the unit has been paid for, so it waits
+                # at the head of the queue and tries again next tick rather
+                # than being silently eaten.
+                if not head.blocked:
+                    head.blocked = True
+                    sim.state.events.append(
+                        Event(
+                            kind="unit_blocked",
+                            tick=sim.state.tick,
+                            data={"building": building.id, "unit": head.item_id, "owner": building.owner},
+                        )
+                    )
+                continue
+            building.queue.pop(0)
         else:
+            building.queue.pop(0)
             _finish_research(sim, building, head.item_id)
 
 
-def _spawn_trained_squad(sim: "Sim", building: "Building", def_id: str) -> None:
+def _spawn_trained_squad(sim: "Sim", building: "Building", def_id: str) -> bool:
+    """Put a freshly trained squad on the field; `False` if it has nowhere to go."""
     sdef = sim.data.squads[def_id]
     cell = _rally_cell(sim, building, sdef.kind == "vehicle")
     if cell is None:  # nowhere on the map this unit can stand
-        return
+        return False
     squad = sim.spawn_squad(building.owner, def_id, center_of(cell, CELL_M))
     sim.state.events.append(
         Event(
@@ -381,6 +391,7 @@ def _spawn_trained_squad(sim: "Sim", building: "Building", def_id: str) -> None:
             data={"building": building.id, "unit": def_id, "squad": squad.id, "owner": building.owner},
         )
     )
+    return True
 
 
 def _finish_research(sim: "Sim", building: "Building", upgrade_id: str) -> None:
@@ -397,32 +408,17 @@ def _finish_research(sim: "Sim", building: "Building", upgrade_id: str) -> None:
 
 
 def _rally_cell(sim: "Sim", building: "Building", is_vehicle: bool) -> tuple[int, int] | None:
-    """Nearest passable cell to the one just south of the footprint's bottom centre."""
+    """Passable cell beside the building, on the side facing the map centre.
+
+    The same rule the starting builder uses (`Sim._builder_cell`): a unit
+    trained in the north-west base and one trained in the south-east base
+    both step out toward the fighting, rather than both stepping south.
+    """
     bdef = sim.data.buildings[building.def_id]
-    cx0, cy0 = building.cell
-    w, h = bdef.footprint
     passable = sim.map.pass_veh if is_vehicle else sim.map.pass_inf
-    return _nearest_passable(passable, (cx0 + (w - 1) // 2, cy0 + h))
-
-
-def _nearest_passable(passable: np.ndarray, cell: tuple[int, int]) -> tuple[int, int] | None:
-    """8-connected BFS outward from `cell` over a fixed neighbour order."""
-    height, width = passable.shape
-    cx = min(max(cell[0], 0), width - 1)
-    cy = min(max(cell[1], 0), height - 1)
-    if passable[cy, cx]:
-        return (cx, cy)
-
-    seen = {(cx, cy)}
-    queue: deque[tuple[int, int]] = deque([(cx, cy)])
-    while queue:
-        x, y = queue.popleft()
-        for dx, dy in _RING_OFFSETS:
-            nx, ny = x + dx, y + dy
-            if not (0 <= nx < width and 0 <= ny < height) or (nx, ny) in seen:
-                continue
-            seen.add((nx, ny))
-            if passable[ny, nx]:
-                return (nx, ny)
-            queue.append((nx, ny))
-    return None
+    return pathfinding.adjacent_cell_toward(
+        passable,
+        building.cell,
+        bdef.footprint,
+        pathfinding.grid_centre(sim.map.width, sim.map.height),
+    )

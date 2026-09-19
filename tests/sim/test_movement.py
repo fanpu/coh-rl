@@ -162,6 +162,32 @@ def test_nearest_adjacent_passable_picks_the_closest_open_ring_cell():
     assert cell[0] >= 3 or cell[1] >= 3
 
 
+def test_the_path_cache_is_capped_like_the_vision_mask_cache():
+    from coh.sim.constants import PATH_CACHE_MAX, VISION_MASK_CACHE_MAX
+
+    assert isinstance(PATH_CACHE_MAX, int) and PATH_CACHE_MAX > 0
+    assert PATH_CACHE_MAX <= VISION_MASK_CACHE_MAX  # paths cost more to keep
+
+
+def test_the_path_cache_evicts_fifo_without_changing_any_answer(monkeypatch):
+    """A long game visits far more (start, goal) pairs than it may keep."""
+    from coh.sim import pathfinding
+
+    monkeypatch.setattr(pathfinding, "PATH_CACHE_MAX", 8)
+    sim = make_sim()
+    goals = [(cx, 20) for cx in range(30)]
+
+    for goal in goals:
+        pathfinding.find_path_cached(sim, False, (10, 10), goal)
+        assert len(sim._path_cache) <= 8
+
+    # Eviction is a pure cache concern: the answers never change.
+    for goal in (goals[0], goals[-1]):
+        assert pathfinding.find_path_cached(sim, False, (10, 10), goal) == pathfinding.find_path(
+            sim.map.pass_inf, (10, 10), goal
+        )
+
+
 # --------------------------------------------------------------------------
 # movement system: Move / AttackMove
 # --------------------------------------------------------------------------
@@ -324,6 +350,45 @@ def test_retreat_paths_toward_own_hq_then_goes_idle():
     w, h = sim.data.buildings[hq.def_id].footprint
     cx, cy = cell_of(squad.pos)
     assert (hcx - 1) <= cx <= (hcx + w) and (hcy - 1) <= cy <= (hcy + h)
+
+
+def test_retreat_without_an_hq_is_rejected_rather_than_raising():
+    """A player whose HQ is gone and who owns no other reinforcing building
+    has nowhere to retreat to: an invalid order, never a KeyError."""
+    sim = make_sim()
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    player = sim.state.players[0]
+    del sim.state.buildings[player.hq_id]
+
+    (result,) = sim.issue(0, [Retreat(squad=squad.id)])
+
+    assert not result.ok
+    assert "retreat" in result.reason
+    assert squad.state is not SquadState.RETREATING
+    assert sim.state.players[0].invalid_orders == 1
+
+
+def test_retreat_falls_back_to_a_teammates_hq_when_own_hq_is_gone():
+    from coh.sim.sim import PlayerSetup
+
+    sim = make_sim(
+        players=[
+            PlayerSetup(faction="us", team=0, start_slot=0),
+            PlayerSetup(faction="us", team=0, start_slot=1),
+        ],
+    )
+    squad = spawn(sim, 0, "rifles", (10, 10))
+    del sim.state.buildings[sim.state.players[0].hq_id]
+
+    (result,) = sim.issue(0, [Retreat(squad=squad.id)])
+
+    assert result.ok
+    assert squad.state is SquadState.RETREATING
+    mate_hq = sim.state.buildings[sim.state.players[1].hq_id]
+    hcx, hcy = mate_hq.cell
+    w, h = sim.data.buildings[mate_hq.def_id].footprint
+    goal = squad.path[-1]
+    assert (hcx - 1) <= goal[0] <= (hcx + w) and (hcy - 1) <= goal[1] <= (hcy + h)
 
 
 def test_capture_reaches_the_point_and_keeps_its_order():

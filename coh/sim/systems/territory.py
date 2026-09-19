@@ -4,11 +4,11 @@ Each tick:
 
 1. Clear `PointState.op_building` on any point whose observation post has
    died (no longer in `state.buildings`).
-2. For every non-HQ point, gather this tick's eligible capturers (see
-   `_capturers_by_team`), then either stall (capturers of >=2 teams present),
-   advance/neutralize progress toward the sole present team, or decay
-   progress toward the point's resting value (owner's, or neutral) when no
-   one is capturing.
+2. For every non-HQ point, work out who is standing on it and who is
+   actually capturing it (see `_contest`), then either stall (infantry of
+   >=2 teams inside the radius, whatever their orders), advance/neutralize
+   progress toward the only team with a `Capture` order, or decay progress
+   toward the point's resting value (owner's, or neutral).
 3. If any point's `owner_team` changed this tick, recompute
    `state.connected` for every team.
 
@@ -58,12 +58,13 @@ def run(sim: "Sim") -> None:
 
 
 def hq_point_ids(sim: "Sim") -> set[str]:
-    """Point ids of the sector each `StartDef` names: permanently owned."""
+    """Point ids of every team's HQ sectors (`Sim.hq_sectors`): permanently owned."""
     ids: set[str] = set()
-    for start in sim.map.starts:
-        sector = sim.map.sectors.get(start.sector)
-        if sector is not None and sector.point_id is not None:
-            ids.add(sector.point_id)
+    for sector_ids in sim.hq_sectors.values():
+        for sector_id in sector_ids:
+            sector = sim.map.sectors.get(sector_id)
+            if sector is not None and sector.point_id is not None:
+                ids.add(sector.point_id)
     return ids
 
 
@@ -102,30 +103,42 @@ def _has_living_op(sim: "Sim", point: "PointState") -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _capturers_by_team(sim: "Sim", pid: str, point_def: "PointDef", econ) -> dict[int, float]:
-    """Sum of `capture_rate` per team among squads eligible to capture `pid`."""
+def _contest(sim: "Sim", pid: str, point_def: "PointDef", econ) -> tuple[set[int], dict[int, float]]:
+    """`(teams present, capture rate per team)` at `pid` this tick.
+
+    The two are deliberately different tests (design spec §2.6):
+
+    - *presence* is any capture-capable infantry standing inside the capture
+      radius, whatever it was ordered to do. Two teams present means the point
+      is CONTESTED: progress neither advances nor decays, so a defender
+      standing on its own point blocks a neutralization without needing a
+      `Capture` order of its own. A pinned squad still occupies the ground.
+    - *progress* is only made by squads actually carrying a `Capture` order
+      for this point, and only while they are not pinned.
+
+    Retreating, garrisoned, abandoned and wiped-out squads are neither.
+    """
     center = center_of(point_def.cell, CELL_M)
-    totals: dict[int, float] = {}
+    present: set[int] = set()
+    rates: dict[int, float] = {}
     for sid in entity_ids(sim.state.squads):
         squad = sim.state.squads[sid]
-        order = squad.order
-        if not isinstance(order, orders_mod.Capture) or order.point_id != pid:
-            continue
-        if squad.pinned or squad.state is SquadState.RETREATING:
-            continue
-        if squad.garrison_in is not None or squad.abandoned:
+        if squad.state is SquadState.RETREATING or squad.garrison_in is not None or squad.abandoned:
             continue
         if not squad.has_alive_members:
             continue
         sdef = sim.data.squads[squad.def_id]
         if sdef.capture_rate <= 0:
             continue
-        dist = distance(squad.pos, center)
-        if dist > econ.capture_radius:
+        if distance(squad.pos, center) > econ.capture_radius:
             continue
         team = sim.state.players[squad.owner].team
-        totals[team] = totals.get(team, 0.0) + sdef.capture_rate
-    return totals
+        present.add(team)
+        order = squad.order
+        if squad.pinned or not isinstance(order, orders_mod.Capture) or order.point_id != pid:
+            continue
+        rates[team] = rates.get(team, 0.0) + sdef.capture_rate
+    return present, rates
 
 
 def _process_point(sim: "Sim", pid: str, point_def: "PointDef", econ) -> bool:
@@ -133,10 +146,10 @@ def _process_point(sim: "Sim", pid: str, point_def: "PointDef", econ) -> bool:
     point = sim.state.points[pid]
     prev_owner = point.owner_team
 
-    capturers = _capturers_by_team(sim, pid, point_def, econ)
+    present, capturers = _contest(sim, pid, point_def, econ)
     teams = sorted(capturers)
 
-    if len(teams) > 1:
+    if len(present) > 1:
         # Contested by multiple teams: stalled, no progress change.
         point.capturing_team = None
     elif len(teams) == 1:
@@ -221,7 +234,7 @@ def recompute_connectivity(sim: "Sim") -> None:
     teams = sorted({player.team for player in sim.state.players.values()})
     connected: dict[int, list[int]] = {}
     for team in teams:
-        hq_sectors = sorted({s.sector for s in sim.map.starts if s.team == team})
+        hq_sectors = sim.hq_sectors.get(team, [])
         seen: set[int] = set(hq_sectors)
         queue: deque[int] = deque(hq_sectors)
         while queue:

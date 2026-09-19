@@ -462,7 +462,7 @@ def _pursue_attack_order(
     yet", which this tick then becomes.
     """
     entity = _lookup(sim, order.target_id)
-    if entity is None:
+    if entity is None or not _still_hostile(sim, team, entity):
         _clear_attack_order(sim, squad)
         return
 
@@ -487,6 +487,20 @@ def _pursue_attack_order(
     if squad.garrison_in is not None:
         return  # a garrisoned squad holds the building; it never walks out
     _repath_toward(sim, squad, order, entity)
+
+
+def _still_hostile(sim: "Sim", team: int, entity: Squad | Building) -> bool:
+    """Could this target ever be engageable by `team` again?
+
+    `_is_engageable`'s other refusals (out of reach, out of sight, no LOS)
+    are all things pursuit exists to fix, but these two are permanent: a
+    neutral house whose last occupant walked out is map furniture again, and
+    an entity that changed hands (a re-crewed gun) is now a friend. Without
+    this the squad would re-path at it forever.
+    """
+    if isinstance(entity, Building):
+        return _building_team(sim, entity) not in (team, _NO_TEAM)
+    return _team_of(sim, entity.owner) != team
 
 
 def _repath_toward(sim: "Sim", squad: Squad, order: orders_mod.Attack, entity: Squad | Building) -> None:

@@ -396,3 +396,20 @@ def test_visible_grid_is_a_fresh_array_each_tick():
     sim.state.visible[0][:, :] = True  # what several sim tests do
     sim.tick()
     assert np.array_equal(sim.state.visible[0], clean)
+
+
+def test_vision_is_current_at_reset():
+    """`Sim.__init__` runs the vision system once, so the opening observation
+    (and any order issued before the first `tick()`) sees the real grid
+    instead of an all-dark one."""
+    sim = make_sim(seed=0)
+
+    assert sim.state.visible[0].any() and sim.state.visible[1].any()
+    for player_id in (0, 1):
+        builder = next(s for s in sim.state.squads.values() if s.owner == player_id)
+        assert vision.is_visible(sim, player_id, builder)
+
+    before = {team: grid.copy() for team, grid in sim.state.visible.items()}
+    vision.run(sim)  # already up to date: re-running changes nothing
+    for team, grid in before.items():
+        assert np.array_equal(sim.state.visible[team], grid)
